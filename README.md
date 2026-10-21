@@ -87,14 +87,14 @@ sequenceDiagram
 ### 1. Projekt klónozása vagy GitHub beállítás
 Ha GitHubra szeretnéd feltölteni a projektet:
 ```bash
-git remote add origin https://github.com/FELHASZNALOD/ncore-plex-downloader.git
+git remote add origin https://github.com/Gyuri125/ncore-plex-downloader.git
 git branch -M main
 git push -u origin main
 ```
 
 Vagy klónozás:
 ```bash
-git clone https://github.com/FELHASZNALOD/ncore-plex-downloader.git
+git clone https://github.com/Gyuri125/ncore-plex-downloader.git
 cd ncore-plex-downloader
 ```
 
