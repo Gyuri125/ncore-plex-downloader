@@ -1,3 +1,6 @@
+import socket
+import time
+import urllib.parse
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from loguru import logger
@@ -35,13 +38,30 @@ class TorrentService:
         self.temp_dir = settings.DOWNLOAD_TEMP_DIR
 
         self.client: Optional["qbittorrentapi.Client"] = None
+        self._last_failed_connect = 0.0
 
     def connect(self) -> bool:
         """
-        Csatlakozik a qBittorrent WebUI felületéhez.
+        Csatlakozik a qBittorrent WebUI felületéhez gyors időkéréssel.
         """
         if qbittorrentapi is None:
             logger.error("A 'qbittorrent-api' könyvtár nincs telepítve! Futtasd: pip install qbittorrent-api")
+            return False
+
+        # Ha nemrég próbáltuk és nem fut, azonnal lépjünk tovább
+        if time.time() - self._last_failed_connect < 15.0:
+            return False
+
+        # Előzetes gyors socket ellenőrzés (ha a port zárva van, 0.2s alatt kiderül a 25s requests retry helyett)
+        try:
+            parsed = urllib.parse.urlparse(self.host)
+            host_name = parsed.hostname or "127.0.0.1"
+            port_num = parsed.port or 8080
+            sock = socket.create_connection((host_name, port_num), timeout=0.2)
+            sock.close()
+        except Exception:
+            self.client = None
+            self._last_failed_connect = time.time()
             return False
 
         try:
@@ -49,7 +69,7 @@ class TorrentService:
                 host=self.host,
                 username=self.username,
                 password=self.password,
-                REQUESTS_ARGS={"timeout": (5.0, 10.0)},
+                REQUESTS_ARGS={"timeout": (1.0, 2.0)},
             )
             self.client.auth_log_in()
             version = self.client.app.version
@@ -60,14 +80,17 @@ class TorrentService:
         except qbittorrentapi.LoginFailed:
             logger.error(f"Sikertelen qBittorrent bejelentkezés! Ellenőrizd a felhasználónevet és jelszót: {self.host}")
             self.client = None
+            self._last_failed_connect = time.time()
             return False
         except qbittorrentapi.APIConnectionError as e:
             logger.error(f"Nem sikerült csatlakozni a qBittorrent WebUI-hoz ({self.host}): {str(e)}")
             self.client = None
+            self._last_failed_connect = time.time()
             return False
         except Exception as e:
             logger.error(f"Váratlan hiba a qBittorrent kapcsolódáskor: {str(e)}")
             self.client = None
+            self._last_failed_connect = time.time()
             return False
 
     def is_connected(self) -> bool:

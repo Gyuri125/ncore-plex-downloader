@@ -194,9 +194,9 @@ def main():
 
                         with c_img:
                             if item.poster_url:
-                                st.image(item.poster_url, use_column_width=True)
+                                st.image(item.poster_url, width="stretch")
                             else:
-                                st.image("https://via.placeholder.com/300x450.png?text=Nincs+Kép", use_column_width=True)
+                                st.image("https://via.placeholder.com/300x450.png?text=Nincs+Kép", width="stretch")
 
                         with c_info:
                             type_tag = "🎬 Film" if item.media_type == MediaType.MOVIE else "📺 Sorozat"
