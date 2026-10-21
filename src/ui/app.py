@@ -8,13 +8,13 @@ from src.models.media import MediaItem, MediaType
 
 # Oldal konfiguráció (széles elrendezés, sötét téma, mobilbarát nézet)
 st.set_page_config(
-    page_title="Apa Média Letöltője",
+    page_title="Ncore Média Letöltő",
     page_icon="🎬",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
 
-# Egyedi stílusok az "Apa-barát" megjelenéshez (nagy gombok, kártyák, mobilbarát margók)
+# Egyedi stílusok a letisztult megjelenéshez (nagy gombok, kártyák, mobilbarát margók)
 st.markdown(
     """
     <style>
@@ -127,7 +127,7 @@ def main():
     st.markdown(
         """
         <div class="app-header">
-            <div class="app-title">🎬 Apa Média Letöltője</div>
+            <div class="app-title">🎬 Ncore Média Letöltő</div>
             <div class="app-subtitle">Keresd meg a filmet, és a rendszer mindent automatikusan előkészít a TV-re!</div>
         </div>
         """,

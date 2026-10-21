@@ -1,3 +1,3 @@
 """
-Felhasználói felület (Apa-barát, egyszerű, modern WebUI)
+Felhasználói felület (Egyszerű, modern, reszponzív WebUI)
 """

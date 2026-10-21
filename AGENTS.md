@@ -6,10 +6,10 @@ Ez a dokumentum az AI kódoló asszisztensek (és fejlesztők) számára készü
 
 ## 1. Projekt Áttekintés és Célkitűzés
 
-A projekt célja egy **„Apa-barát”**, teljesen automatizált film- és sorozatletöltő rendszer létrehozása Pythonban, mely minimális felhasználói beavatkozást igényel, megelőzi a téves letöltéseket, és készre előkészíti a médiát a Plex szerver számára.
+A projekt célja egy végtelenül egyszerű, teljesen automatizált film- és sorozatletöltő rendszer létrehozása Pythonban, mely minimális felhasználói beavatkozást igényel, megelőzi a téves letöltéseket, és készre előkészíti a médiát a Plex szerver számára.
 
-### Alapelv: "Apa-barát" UI & Biztos Találat
-- A felhasználó (Apa) csak beírja a film vagy sorozat címét.
+### Alapelv: Felhasználóbarát UI & Biztos Találat
+- A felhasználó csak beírja a film vagy sorozat címét.
 - A rendszer először egy filmes adatbázisban (TMDB) megkeresi a lehetséges jelölteket, és vizuálisan (poszter, magyar leírás, évszám, rendező, színészek) megjeleníti.
 - A felhasználó egyetlen kattintással megerősíti: *"Igen, erre gondoltam!"*
 - A megerősítés után a rendszer **autonóm módon** elvégzi a háttérmunkát:
@@ -54,7 +54,7 @@ Ncore_Film&Sori_letöltő/
     │   └── orchestrator.py   # Fő vezérlő folyamat (Search -> Download -> Process -> Plex)
     └── ui/
         ├── __init__.py
-        └── app.py            # Apa-barát Streamlit vagy WebUI felület
+        └── app.py            # Felhasználóbarát Streamlit vagy WebUI felület
 ```
 
 ---
@@ -114,7 +114,7 @@ Ncore_Film&Sori_letöltő/
   - **Sorozat formátum**:
     `PLEX_SERIES_DIR / {Sorozat Cím} / Season {Évad_szám} / {Sorozat Cím} - S{Évad}E{Epizód}.{kiterjesztés}`
 - **Plex könyvtár frissítés**:
-  - `plexapi` meghívása -> Könyvtár frissítés (Library Scan triggerelése), így a film azonnal megjelenik Apa TV-jén.
+  - `plexapi` meghívása -> Könyvtár frissítés (Library Scan triggerelése), így a film azonnal megjelenik a TV-n és a klienseken.
 
 ### F. Kezelőfelület és Hálózati Elérés (ui/app.py)
 - **Többeszközös hozzáférés**:
@@ -136,5 +136,5 @@ Ncore_Film&Sori_letöltő/
    - Típusannotációk használata (`typing`, Pydantic modellek).
    - Logolás a `loguru` segítségével az egyszerű hibakereséshez.
 4. **Interfész Tervezés**:
-   - Apa nem rendszergazda: ne legyenek zavaró hibaüzenetek, bonyolult beállítások a főoldalon.
+   - A végfelhasználó nem rendszergazda: ne legyenek zavaró hibaüzenetek, bonyolult beállítások a főoldalon.
    - Legyen nagy keresőmező, nagy kártyák a filmeknek poszterrel, egyértelmű zöld gomb a letöltés indítására, és egy állapotjelző sáv a folyamatban lévő letöltésekhez.

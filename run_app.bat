@@ -1,6 +1,6 @@
 @echo off
 chcp 65001 > nul
-title Ncore Film & Sorozat Letöltő - Apa-barát Média Rendszer
+title Ncore Film & Sorozat Letöltő - Automata Média Rendszer
 
 echo ==============================================================
 echo       🎬 Ncore Film & Sorozat Letöltő - Indítás...

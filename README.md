@@ -1,4 +1,4 @@
-# 🎬 Ncore Film & Sorozat Letöltő (Apa-barát Média Automatizáció)
+# 🎬 Ncore Film & Sorozat Letöltő (Automata Média Rendszer)
 
 [![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
 [![PyCharm](https://img.shields.io/badge/IDE-PyCharm-21D789?style=for-the-badge&logo=pycharm&logoColor=white)](https://www.jetbrains.com/pycharm/)
@@ -6,7 +6,7 @@
 [![Plex](https://img.shields.io/badge/Media%20Server-Plex-E5A00D?style=for-the-badge&logo=plex&logoColor=white)](https://www.plex.tv/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](LICENSE)
 
-Egy végtelenül egyszerű, felhasználóbarát („Apa-barát”) média letöltő és rendszerező alkalmazás Pythonban. Segítségével bárki könnyen kereshet filmeket és sorozatokat, a rendszer pedig a háttérben automatikusan megkeresi a legjobb minőségű kiadást nCore-on, gondoskodik a magyar szinkronról vagy feliratról, kezeli a seedelési szabályokat, és közvetlenül a Plex médiaszerverre készíti elő a tartalmat.
+Egy végtelenül egyszerű, teljesen automatizált média letöltő és rendszerező alkalmazás Pythonban. Segítségével bárki könnyen kereshet filmeket és sorozatokat, a rendszer pedig a háttérben automatikusan megkeresi a legjobb minőségű kiadást nCore-on, gondoskodik a magyar szinkronról vagy feliratról, kezeli a seedelési szabályokat, és közvetlenül a Plex médiaszerverre készíti elő a tartalmat.
 
 ---
 
@@ -38,7 +38,7 @@ Ez az alkalmazás megszünteti a tévedés lehetőségét:
 - 🍿 **Plex Rendszerezés & Automata Könyvtárfrissítés**:
   - Szabványos Plex mappastruktúrába (`/Filmek/Film Címe (Év)/...`) rendezi a letöltött fájlokat.
   - Plex API-n keresztül azonnal értesíti a szervert az új médiáról.
-- 👨‍🦳 **Egyszerű, érthető kezelőfelület**:
+- ✨ **Egyszerű, érthető kezelőfelület**:
   - Nagy méretű gombok, átlátható folyamatjelző, technikai zsargonoktól mentes dizájn.
 
 ---
@@ -48,7 +48,7 @@ Ez az alkalmazás megszünteti a tévedés lehetőségét:
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Apa as Felhasználó (Apa)
+    actor Felhasznalo as Felhasználó
     participant UI as Kereső Felület (WebUI)
     participant TMDB as Filmes Adatbázis (TMDB)
     participant nCore as nCore Kereső & Kliens
@@ -56,11 +56,11 @@ sequenceDiagram
     participant Torrent as qBittorrent
     participant Plex as Plex Médiaszerver
 
-    Apa->>UI: Beírja a film címét (pl. "Gladiátor")
+    Felhasznalo->>UI: Beírja a film címét (pl. "Gladiátor")
     UI->>TMDB: Keresés magyar nyelven
     TMDB-->>UI: Találatok (Poszterek, Év, IMDb ID)
-    UI-->>Apa: Képes lista megjelenítése
-    Apa->>UI: Megerősítés: "Igen, ez az!"
+    UI-->>Felhasznalo: Képes lista megjelenítése
+    Felhasznalo->>UI: Megerősítés: "Igen, ez az!"
     
     rect rgb(30, 40, 60)
         Note over UI,Plex: Automatikus Háttérfolyamat
@@ -77,7 +77,7 @@ sequenceDiagram
         UI->>Plex: Fájl áthelyezése a Plex mappába + Könyvtárfrissítés
     end
 
-    Plex-->>Apa: A film megjelent a TV-n és nézhető!
+    Plex-->>Felhasznalo: A film megjelent a TV-n és nézhető!
 ```
 
 ---
@@ -132,7 +132,7 @@ Töltsd ki a szükséges adatokat a `.env` fájlban:
 ## 🖥️ Használat és Indítás
 
 ### A) Asztali indítás (Egyetlen kattintás)
-- Az Asztalra kihelyezett **`Apa_Media_Letolto.exe`** ikonra duplán kattintva az alkalmazás automatikusan elindul a háttérben, és azonnal megnyitja a böngészőt.
+- Az Asztalra kihelyezett **`Ncore_Media_Letolto.exe`** ikonra duplán kattintva az alkalmazás automatikusan elindul a háttérben, és azonnal megnyitja a böngészőt.
 - **Kódfrissítés esetén:** Futtasd a **`build_desktop_exe.bat`** fájlt, ami újrafordítja a legfrissebb forráskódot és automatikusan felülírja az Asztalon lévő régebbi `.exe` fájlt!
 
 ### B) Indítás parancssorból vagy böngészőből
@@ -143,7 +143,7 @@ Vagy dupla kattintás a **`run_app.bat`** fájlra.
 Ezután nyisd meg a böngészőben: `http://localhost:8501`.
 
 ### C) Mobil és Tablet elérés a helyi Wi-Fi-ről
-Nyisd meg a telefon böngészőjében a felület fejlécében kiírt helyi címet (pl. `http://192.168.1.X:8501`), és Apa közvetlenül a telefonjáról is vezérelheti a letöltést!
+Nyisd meg a telefon böngészőjében a felület fejlécében kiírt helyi címet (pl. `http://192.168.1.X:8501`), és közvetlenül a telefonról vagy tabletről is vezérelhető a letöltés!
 
 ---
 
@@ -174,7 +174,7 @@ ncore-plex-downloader/
     ├── models/               # Adatstruktúrák (MediaItem, TorrentRelease)
     ├── services/             # TMDB, nCore, Felirat, qBittorrent és Plex modulok
     ├── core/                 # Szervező (Hardlink), orkesztrátor
-    └── ui/                   # Streamlit Apa-barát felület
+    └── ui/                   # Streamlit felhasználóbarát felület
 ```
 
 ---

@@ -22,5 +22,5 @@ babelfish>=0.6.0
 # Logging & Utilities
 loguru>=0.7.2
 
-# User Interface (Apa-barát, egyszerű, modern felület)
+# User Interface (Egyszerű, modern felület)
 streamlit>=1.32.0

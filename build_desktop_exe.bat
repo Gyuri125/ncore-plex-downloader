@@ -1,16 +1,16 @@
 @echo off
 chcp 65001 > nul
 setlocal enabledelayedexpansion
-title Apa Média Letöltő - Friss EXE Készítése az Asztalra
+title Ncore Média Letöltő - Friss EXE Készítése az Asztalra
 
 echo ==============================================================
-echo       🎬 Apa Média Letöltő - Automata Asztali EXE Fordító
+echo       🎬 Ncore Média Letöltő - Automata Asztali EXE Fordító
 echo ==============================================================
 echo.
 
 set "PROJECT_DIR=%~dp0"
 set "DESKTOP_DIR=%USERPROFILE%\Desktop"
-set "EXE_NAME=Apa_Media_Letolto.exe"
+set "EXE_NAME=Ncore_Media_Letolto.exe"
 set "TARGET_EXE=%DESKTOP_DIR%\%EXE_NAME%"
 
 echo [1/4] Futó folyamatok ellenőrzése és bezárása...
@@ -28,7 +28,7 @@ if exist "%PROJECT_DIR%.venv\Scripts\activate.bat" (
 echo.
 echo [2/4] Legfrissebb forráskód fordítása (PyInstaller)...
 cd /d "%PROJECT_DIR%"
-pyinstaller --noconfirm --clean --onefile --console --name "Apa_Media_Letolto" launcher.py
+pyinstaller --noconfirm --clean --onefile --console --name "Ncore_Media_Letolto" launcher.py
 
 if errorlevel 1 (
     echo.
