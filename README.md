@@ -1,191 +1,226 @@
-# 🎬 Ncore Film & Sorozat Letöltő (Automata Média Rendszer)
+<div align="center">
 
-[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
-[![PyCharm](https://img.shields.io/badge/IDE-PyCharm-21D789?style=for-the-badge&logo=pycharm&logoColor=white)](https://www.jetbrains.com/pycharm/)
-[![qBittorrent](https://img.shields.io/badge/Torrent-qBittorrent-2F6792?style=for-the-badge&logo=qbittorrent&logoColor=white)](https://www.qbittorrent.org/)
-[![Plex](https://img.shields.io/badge/Media%20Server-Plex-E5A00D?style=for-the-badge&logo=plex&logoColor=white)](https://www.plex.tv/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](LICENSE)
+# Ncore Plex Downloader
 
-Egy végtelenül egyszerű, teljesen automatizált média letöltő és rendszerező alkalmazás Pythonban. Segítségével bárki könnyen kereshet filmeket és sorozatokat, a rendszer pedig a háttérben automatikusan megkeresi a legjobb minőségű kiadást nCore-on, gondoskodik a magyar szinkronról vagy feliratról, kezeli a seedelési szabályokat, és közvetlenül a Plex médiaszerverre készíti elő a tartalmat.
+**Automatizált, egykattintásos média letöltő és rendszerező rendszer nCore, qBittorrent és Plex integrációval.**
 
----
+[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
+[![qBittorrent](https://img.shields.io/badge/Torrent-qBittorrent-2F6792?style=flat-square&logo=qbittorrent&logoColor=white)](https://www.qbittorrent.org/)
+[![Plex](https://img.shields.io/badge/Media%20Server-Plex-E5A00D?style=flat-square&logo=plex&logoColor=white)](https://www.plex.tv/)
+[![TMDB](https://img.shields.io/badge/Metadata-TMDB-01B4E4?style=flat-square&logo=themoviedatabase&logoColor=white)](https://www.themoviedb.org/)
+[![Tests](https://img.shields.io/badge/Tests-30%20passed-success?style=flat-square)](tests/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
 
-## 💡 Miért készült?
+<br>
 
-Sokszor előfordul, hogy egy filmnek több feldolgozása létezik azonos címmel, vagy a torrent oldalakon nehéz eligazodni a különböző kiadások (CAM, WEB-DL, szinkronos, angol) között.
+<p align="center">
+  <a href="#attekintes">Áttekintés</a> •
+  <a href="#fobb-funkciok">Főbb Funkciók</a> •
+  <a href="#munkafolyamat">Munkafolyamat</a> •
+  <a href="#telepites-es-beallitas">Telepítés</a> •
+  <a href="#hasznalat-es-inditas">Használat</a> •
+  <a href="#tesztek">Tesztek</a> •
+  <a href="#mappastruktura">Mappastruktúra</a>
+</p>
 
-Ez az alkalmazás megszünteti a tévedés lehetőségét:
-1. **Vizuális azonosítás**: Beírt cím alapján megmutatja a lehetséges filmek borítóját, évszámát és leírását.
-2. **Egy kattintásos megerősítés**: A felhasználó rábök arra a képre, amit tényleg látni szeretne.
-3. **Automata háttérmunka**: A rendszer a háttérben IMDb azonosítóval megkeresi az nCore-on, letölti a legmegfelelőbb torrentet, letölti a magyar feliratot (ha nincs szinkron), betartja a seedelési kötelezettséget, átmozgatja a fájlokat és frissíti a Plexet.
-
----
-
-## 🚀 Főbb Funkciók
-
-- 🎯 **Tévedésmentes filmkeresés (TMDB integráció)**:
-  - Poszterek, színészek, rendezők, magyar szinopszis és hivatalos IMDb azonosító lekérése.
-- 🦁 **Intelligens nCore keresés**:
-  - IMDb kód alapú pontos egyezés (nincs félreletöltés!).
-  - **1. Prioritás**: Legjobb minőségű magyar szinkronos verzió (`hd_hun`, `sorozat_hun`).
-  - **2. Prioritás**: Ha nincs szinkron, eredeti nyelves HD kiadás (`hd`, `sorozat`).
-- 📝 **Automatikus Felirat Kereső Motor**:
-  - Amennyiben csak angol/eredeti nyelvű kiadás érhető el, automatikusan megkeresi és letölti a hozzá illeszkedő magyar feliratot (OpenSubtitles / Feliratok.info), majd szabványos Plex formátumban mellékeli (`.hu.srt`).
-- ⚡ **qBittorrent Automatizáció & Hit'n'Run Védelem**:
-  - Automatikus torrent indítás és címkézés.
-  - Figyeli az nCore HnR szabályzatát (pl. 48 óra seedelés vagy 1.0 arány elérése).
-  - A szabály teljesülése után automatikusan megállítja/eltávolítja a feladatot a kliensből.
-- 🍿 **Plex Rendszerezés & Automata Könyvtárfrissítés**:
-  - Szabványos Plex mappastruktúrába (`/Filmek/Film Címe (Év)/...`) rendezi a letöltött fájlokat.
-  - Plex API-n keresztül azonnal értesíti a szervert az új médiáról.
-- ✨ **Egyszerű, érthető kezelőfelület**:
-  - Nagy méretű gombok, átlátható folyamatjelző, technikai zsargonoktól mentes dizájn.
+</div>
 
 ---
 
-## 🔄 Folyamat Ábra (Workflow)
+## Áttekintés
+
+A **Ncore Plex Downloader** célja, hogy a film- és sorozatkeresést végtelenül egyszerűvé és tévedésmentessé tegye. A felhasználónak csupán a média címét kell megadnia; a rendszer vizuálisan (poszterekkel, leírással, évszámmal és stábbal) azonosítja a kívánt tartalmat, majd a háttérben autonóm módon elvégzi a teljes letöltési, feliratozási, seedelési és Plex könyvtárfrissítési feladatot.
+
+### Miért készült?
+
+1. **Azonos címek problémája:** Több azonos című vagy remake film esetén a puszta szöveges keresés gyakran téves kiadást tölt le. A TMDB vizuális megerősítés és a hivatalos IMDb azonosító (`tt...`) garantálja a 100%-os egyezést.
+2. **Kiadások rendezetlensége:** Automatikusan előnyben részesíti a legjobb minőségű magyar szinkronos kiadásokat (`hd_hun`), kiszűri a rossz minőségű felvételeket (CAM, TS), és ha csak eredeti nyelvű változat érhető el, automatikusan illeszti a magyar feliratot.
+3. **Plex azonnali elérés seedelés közben:** A Hardlink technológiának köszönhetően a film azonnal megjelenik a Plexben 0 MB extra tárhely-foglalás mellett, miközben a torrent kliens az nCore szabályoknak megfelelően tovább osztja a tartalmat.
+
+---
+
+## Főbb Funkciók
+
+| Terület | Funkcionalitás |
+| :--- | :--- |
+| **Vizuális Azonosítás** | TMDB API integráció magyar leírásokkal, poszterekkel, színészekkel, rendezőkkel és hivatalos IMDb azonosítóval. |
+| **nCore Kereső & Rangsoroló** | IMDb kód alapú egyezés, szinkron prioritás (`hd_hun`, `sorozat_hun`), automata minőségi pontozás (BluRay, WEB-DL kiemelése, CAM kizárása). |
+| **Automata Feliratkezelő** | Feliratok.info és OpenSubtitles keresőmotor, automata karakterkódolás konvertálás (CP1250 / ISO-8859-2 ➡️ tiszta UTF-8). |
+| **Hit & Run Védelem** | qBittorrent WebUI vezérlés, 48 órás aktív seedelési idő vagy 1.0 arány elérése utáni automatikus leállítás a letöltött fájlok megőrzésével. |
+| **Plex Rendszerezés** | Hivatalos Plex mappastruktúra és elnevezés (`Filmek/Cím (Év)/Cím (Év) [1080p].mkv`), Hardlink használat, azonnali Library Scan trigger. |
+| **Többeszközös Felület** | Streamlit alapú reszponzív felület, amely helyi hálózaton keresztül PC-ről, telefonról és tabletről is kezelhető. |
+| **Asztali Indító** | Önálló Windows futtatható állomány (`Ncore_Media_Letolto.exe`) és automata frissítő script (`build_desktop_exe.bat`). |
+
+---
+
+## Munkafolyamat
+
+Az alábbi folyamatábra szemlélteti a rendszer belső automatizációját a kereséstől a TV-n való megjelenésig:
 
 ```mermaid
-sequenceDiagram
-    autonumber
-    actor Felhasznalo as Felhasználó
-    participant UI as Kereső Felület (WebUI)
-    participant TMDB as Filmes Adatbázis (TMDB)
-    participant nCore as nCore Kereső & Kliens
-    participant Sub as Felirat Kereső
-    participant Torrent as qBittorrent
-    participant Plex as Plex Médiaszerver
-
-    Felhasznalo->>UI: Beírja a film címét (pl. "Gladiátor")
-    UI->>TMDB: Keresés magyar nyelven
-    TMDB-->>UI: Találatok (Poszterek, Év, IMDb ID)
-    UI-->>Felhasznalo: Képes lista megjelenítése
-    Felhasznalo->>UI: Megerősítés: "Igen, ez az!"
+graph TD
+    A[Média Címének Beírása] --> B[TMDB Keresés & Poszterek Megjelenítése]
+    B --> C[Egykattintásos Megerősítés & IMDb ID Kinyerése]
+    C --> D[nCore Pontos Keresés IMDb Kód Alapján]
+    D --> E{Van Magyar Szinkron?}
     
-    rect rgb(30, 40, 60)
-        Note over UI,Plex: Automatikus Háttérfolyamat
-        UI->>nCore: Keresés IMDb azonosító alapján
-        alt Van Magyar Szinkronos HD
-            nCore-->>Torrent: Letölti a magyar szinkronos torrentet
-        else Csak Angol Nyelvű van
-            nCore-->>Torrent: Letölti a legjobb angol kiadást
-            UI->>Sub: Magyar felirat keresése a kiadáshoz
-            Sub-->>Torrent: Felirat mentése (.hu.srt)
-        end
-        Torrent->>Torrent: Letöltés és nCore HnR seedelés (48 óra / 1.0 arány)
-        Torrent-->>UI: Letöltés kész
-        UI->>Plex: Fájl áthelyezése a Plex mappába + Könyvtárfrissítés
-    end
-
-    Plex-->>Felhasznalo: A film megjelent a TV-n és nézhető!
+    E -->|Igen| F[Magyar Szinkronos HD Release Kiválasztása]
+    E -->|Nem| G[Legjobb HD Kiadás + Automata Magyar Felirat Letöltés]
+    
+    F --> H[Torrent Beküldése a qBittorrentbe]
+    G --> H
+    
+    H --> I[Letöltés Folyamatban]
+    I --> J{Letöltés Kész?}
+    
+    J -->|Igen| K[Plex Média Rendszerezés: Hardlink & Átnevezés]
+    K --> L[Plex Könyvtárfrissítés: Azonnal Nézhető a TV-n]
+    
+    J -->|Háttérben| M[nCore HnR Figyelő: 48 óra seed vagy 1.0 arány]
+    M --> N[Követelmény Teljesítve: Torrent Eltávolítása Fájlok Megőrzésével]
 ```
 
 ---
 
-## 🛠️ Telepítés és Beállítás (PyCharm / Helyi környezet)
+## Telepítés és Beállítás
 
-### 1. Projekt klónozása vagy GitHub beállítás
-Ha GitHubra szeretnéd feltölteni a projektet:
-```bash
-git remote add origin https://github.com/Gyuri125/ncore-plex-downloader.git
-git branch -M main
-git push -u origin main
-```
+### 1. Előfeltételek
 
-Vagy klónozás:
+- **Python**: 3.10 vagy újabb verzió
+- **qBittorrent**: Web UI engedélyezve (*Eszközök ➡️ Beállítások ➡️ Web UI*)
+- **Plex Media Server**: Helyi vagy távoli szerver (opcionális, de ajánlott)
+
+### 2. Projekt letöltése
+
 ```bash
 git clone https://github.com/Gyuri125/ncore-plex-downloader.git
 cd ncore-plex-downloader
 ```
 
-### 2. Python Virtuális Környezet (venv) létrehozása
-PyCharmban:
-- Nyisd meg a **Settings** -> **Project** -> **Python Interpreter** menüt.
-- Hozz létre egy új virtuális környezetet (`.venv`, Python 3.10 vagy újabb).
+### 3. Virtuális környezet és függőségek
 
-Vagy parancssorból:
 ```bash
+# Virtuális környezet létrehozása és aktiválása Windows alatt:
 python -m venv .venv
-# Windows esetén aktiválás:
 .venv\Scripts\activate
-```
 
-### 3. Függőségek telepítése
-```bash
+# Csomagok telepítése:
 pip install -r requirements.txt
 ```
 
-### 4. Konfiguráció (`.env`) létrehozása
-Másold le a `.env.example` fájlt `.env` néven:
+### 4. Konfiguráció (.env)
+
+Másold le a sablonfájlt `.env` néven:
 ```bash
 copy .env.example .env
 ```
-Töltsd ki a szükséges adatokat a `.env` fájlban:
-- **TMDB_API_KEY**: Ingyenesen kérhető a [themoviedb.org](https://www.themoviedb.org/settings/api) oldalon.
-- **NCORE_USERNAME / NCORE_PASSWORD**: nCore hozzáférésed.
-- **QBITTORRENT_HOST / USERNAME / PASSWORD**: A qBittorrent Web UI bejelentkezési adatai.
-- **PLEX_SERVER_URL / PLEX_TOKEN**: Plex médiaszerver elérhetősége.
-- **PLEX_MOVIES_DIR / PLEX_SERIES_DIR**: A célmappák elérési útvonala.
+
+Nyisd meg a `.env` fájlt és töltsd ki a saját adataiddal:
+
+```env
+# TMDB Beállítások (ingyenes regisztráció: https://www.themoviedb.org/settings/api)
+TMDB_API_KEY=a_te_tmdb_api_kulcsod
+TMDB_LANGUAGE=hu-HU
+
+# nCore Hitelesítés
+NCORE_USERNAME=felhasznaloneved
+NCORE_PASSWORD=jelszavad
+
+# qBittorrent WebUI Beállítások
+TORRENT_CLIENT=qbittorrent
+QBITTORRENT_HOST=http://localhost:8080
+QBITTORRENT_USERNAME=admin
+QBITTORRENT_PASSWORD=adminadmin
+
+# nCore Hit & Run Szabályok
+MIN_SEED_TIME_HOURS=48
+TARGET_RATIO=1.0
+AUTO_REMOVE_AFTER_SEED=true
+
+# Mappák Útvonalai
+DOWNLOAD_TEMP_DIR=C:/Torrents/Downloading
+PLEX_MOVIES_DIR=C:/Media/Movies
+PLEX_SERIES_DIR=C:/Media/TV Shows
+
+# Plex Médiaszerver
+PLEX_SERVER_URL=http://localhost:32400
+PLEX_TOKEN=a_te_plex_tokened
+AUTO_REFRESH_PLEX=true
+```
 
 ---
 
-## 🖥️ Használat és Indítás
+## Használat és Indítás
 
-### A) Asztali indítás (Egyetlen kattintás)
-- Az Asztalra kihelyezett **`Ncore_Media_Letolto.exe`** ikonra duplán kattintva az alkalmazás automatikusan elindul a háttérben, és azonnal megnyitja a böngészőt.
-- **Kódfrissítés esetén:** Futtasd a **`build_desktop_exe.bat`** fájlt, ami újrafordítja a legfrissebb forráskódot és automatikusan felülírja az Asztalon lévő régebbi `.exe` fájlt!
+### 1. Indítás az Asztalról (Egy kattintás)
+- Az Asztalra kihelyezett **`Ncore_Media_Letolto.exe`** állományra duplán kattintva a szerver a háttérben elindul, és automatikusan megnyitja a böngészőt.
+- **Forráskód módosítása esetén:** Futtasd a **`build_desktop_exe.bat`** fájlt, amely újrafordítja a friss forrást és felülírja az Asztalon lévő futtatható állományt.
 
-### B) Indítás parancssorból vagy böngészőből
+### 2. Indítás parancssorból
 ```bash
 streamlit run src/ui/app.py
 ```
-Vagy dupla kattintás a **`run_app.bat`** fájlra.
-Ezután nyisd meg a böngészőben: `http://localhost:8501`.
+Vagy kattints a **`run_app.bat`** indítóra.
 
-### C) Mobil és Tablet elérés a helyi Wi-Fi-ről
-Nyisd meg a telefon böngészőjében a felület fejlécében kiírt helyi címet (pl. `http://192.168.1.X:8501`), és közvetlenül a telefonról vagy tabletről is vezérelhető a letöltés!
+### 3. Hálózati elérés (Mobil és Tablet)
+Az alkalmazás elindítása után a helyi Wi-Fi hálózaton keresztül bármilyen eszközről megnyitható a terminálban vagy a felület fejlécében jelzett címen:
+```text
+http://<SZÁMÍTÓGÉP_IP_CÍME>:8501
+```
 
 ---
 
-## 🧪 Automata Tesztelés
+## Tesztek
 
-A projekt átfogó tesztcsomaggal rendelkezik, amely mind a 9 fő modult ellenőrzi (30/30 sikeres teszt):
+A projekt átfogó automatizált egység- és integrációs tesztcsomaggal rendelkezik (30/30 teszt):
+
 ```bash
 pytest tests/
 ```
 
+Tesztelt komponensek:
+- Konfiguráció és típusvalidáció
+- Adatmodellek integritása
+- TMDB keresés és IMDb ID kinyerés
+- nCore HTML táblázat feldolgozás és minőségi rangsorolás
+- qBittorrent kapcsolat és Hit & Run 48 órás szabályzat ellenőrzése
+- Felirat kódolás javítás (CP1250 ➡️ UTF-8) és release név illesztés
+- Plex fájlrendező (Hardlink, mintafájlok kizárása, minőségi címkék kinyerése)
+- Plex könyvtárfrissítés API hívás
+- Master orkesztrátor munkafolyamat
+
 ---
 
-## 📂 Mappastruktúra
+## Mappastruktúra
 
 ```text
 ncore-plex-downloader/
-├── .env.example              # Konfigurációs sablon
-├── .gitignore                # Git kizárások
-├── AGENTS.md                 # Részletes kódolási és AI specifikáció
-├── README.md                 # Ez a dokumentum
+├── .env.example              # Környezeti változók sablonja
+├── .gitignore                # Git kizárások (jelszavak, cache, build)
+├── AGENTS.md                 # Részletes fejlesztői és AI specifikáció
+├── README.md                 # Hivatalos projekt dokumentáció
 ├── requirements.txt          # Python csomagfüggőségek
-├── run_app.bat               # Windows duplakattintásos indító
-├── build_desktop_exe.bat     # Asztali .exe készítő és automata felülíró
-├── launcher.py               # Asztali böngészőindító belépési pont
-├── tests/                    # Átfogó tesztcsomag (pytest)
+├── run_app.bat               # Windows kötegelt indítófájl
+├── build_desktop_exe.bat     # Asztali EXE fordító és felülíró szkript
+├── launcher.py               # Asztali belépési pont és böngésző indító
+├── tests/                    # 30 darab automatizált teszt (pytest)
 └── src/
-    ├── config/               # Pydantic beállítások (.env)
-    ├── models/               # Adatstruktúrák (MediaItem, TorrentRelease)
-    ├── services/             # TMDB, nCore, Felirat, qBittorrent és Plex modulok
-    ├── core/                 # Szervező (Hardlink), orkesztrátor
-    └── ui/                   # Streamlit felhasználóbarát felület
+    ├── config/               # Pydantic beállítások (.env betöltés)
+    ├── models/               # Adatmodellek (MediaItem, TorrentRelease)
+    ├── services/             # TMDB, nCore, qBittorrent, Felirat és Plex modulok
+    ├── core/                 # Szervező (Hardlink) és folyamatvezérlő
+    └── ui/                   # Streamlit webes felület
 ```
 
 ---
 
-## 🔒 Biztonság és Adatvédelem
+## Biztonság és Adatvédelem
 
-- A projekt **nem tartalmaz** és **nem tárol** jelszavakat vagy privát kulcsokat.
-- A `.gitignore` gondoskodik róla, hogy a személyes `.env` fájlod és a letöltött torrent fájlok véletlenül se kerüljenek fel a GitHubra.
+- A tároló **nem tartalmaz** és nem követ jelszavakat, sütiket vagy privát tokeneket.
+- A `.gitignore` megakadályozza a `.env` konfiguráció és a privát torrent állományok feltöltését.
 
 ---
 
-## 📜 Jogi Nyilatkozat
+## Licenc
 
-Ez a projekt kizárólag oktatási és személyes archiválási célokat szolgál. A felhasználó kizárólagos felelőssége a szerzői jogi szabályok és a felhasznált szolgáltatások (nCore, TMDB, Plex) felhasználási feltételeinek betartása.
+Ez a projekt az [MIT Licenc](LICENSE) feltételei szerint használható. Kizárólag oktatási és személyes archiválási célokat szolgál.
