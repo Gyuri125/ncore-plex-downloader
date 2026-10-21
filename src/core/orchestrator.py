@@ -38,11 +38,17 @@ class Orchestrator:
         self.plex_service = PlexService()
         self.organizer = MediaOrganizer()
 
-        # Mappák előkészítése
+        # Mappák előkészítése biztonságosan (ne omoljon össze ha a meghajtó még nincs csatlakoztatva)
         self.STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        self.settings.DOWNLOAD_TEMP_DIR.mkdir(parents=True, exist_ok=True)
-        self.settings.PLEX_MOVIES_DIR.mkdir(parents=True, exist_ok=True)
-        self.settings.PLEX_SERIES_DIR.mkdir(parents=True, exist_ok=True)
+        for dir_path in [
+            self.settings.DOWNLOAD_TEMP_DIR,
+            self.settings.PLEX_MOVIES_DIR,
+            self.settings.PLEX_SERIES_DIR,
+        ]:
+            try:
+                dir_path.mkdir(parents=True, exist_ok=True)
+            except Exception as e:
+                logger.warning(f"Figyelem: A mappa ({dir_path}) nem érhető el közvetlenül: {e}")
 
         self._tasks: Dict[str, dict] = self._load_state()
 

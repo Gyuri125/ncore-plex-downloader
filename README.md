@@ -84,16 +84,23 @@ sequenceDiagram
 
 ## 🛠️ Telepítés és Beállítás (PyCharm / Helyi környezet)
 
-### 1. Projekt klónozása vagy megnyitása
-Nyisd meg a mappát PyCharmban:
+### 1. Projekt klónozása vagy GitHub beállítás
+Ha GitHubra szeretnéd feltölteni a projektet:
 ```bash
-git clone https://github.com/felhasznalo/Ncore_Film-Sori_letolto.git
-cd Ncore_Film-Sori_letolto
+git remote add origin https://github.com/FELHASZNALOD/ncore-plex-downloader.git
+git branch -M main
+git push -u origin main
+```
+
+Vagy klónozás:
+```bash
+git clone https://github.com/FELHASZNALOD/ncore-plex-downloader.git
+cd ncore-plex-downloader
 ```
 
 ### 2. Python Virtuális Környezet (venv) létrehozása
 PyCharmban:
-- Nyisd meg a **Settings** -> **Project: Ncore_Film&Sori_letöltő** -> **Python Interpreter** menüt.
+- Nyisd meg a **Settings** -> **Project** -> **Python Interpreter** menüt.
 - Hozz létre egy új virtuális környezetet (`.venv`, Python 3.10 vagy újabb).
 
 Vagy parancssorból:
@@ -122,31 +129,52 @@ Töltsd ki a szükséges adatokat a `.env` fájlban:
 
 ---
 
-## 🖥️ Használat
+## 🖥️ Használat és Indítás
 
-Indítsd el az alkalmazást PyCharmból vagy parancssorból:
+### A) Asztali indítás (Egyetlen kattintás)
+- Az Asztalra kihelyezett **`Apa_Media_Letolto.exe`** ikonra duplán kattintva az alkalmazás automatikusan elindul a háttérben, és azonnal megnyitja a böngészőt.
+- **Kódfrissítés esetén:** Futtasd a **`build_desktop_exe.bat`** fájlt, ami újrafordítja a legfrissebb forráskódot és automatikusan felülírja az Asztalon lévő régebbi `.exe` fájlt!
+
+### B) Indítás parancssorból vagy böngészőből
 ```bash
 streamlit run src/ui/app.py
 ```
-Ezután nyisd meg a böngészőben a megjelenő címet (alapértelmezetten: `http://localhost:8501`), és már használható is!
+Vagy dupla kattintás a **`run_app.bat`** fájlra.
+Ezután nyisd meg a böngészőben: `http://localhost:8501`.
+
+### C) Mobil és Tablet elérés a helyi Wi-Fi-ről
+Nyisd meg a telefon böngészőjében a felület fejlécében kiírt helyi címet (pl. `http://192.168.1.X:8501`), és Apa közvetlenül a telefonjáról is vezérelheti a letöltést!
+
+---
+
+## 🧪 Automata Tesztelés
+
+A projekt átfogó tesztcsomaggal rendelkezik, amely mind a 9 fő modult ellenőrzi (30/30 sikeres teszt):
+```bash
+pytest tests/
+```
 
 ---
 
 ## 📂 Mappastruktúra
 
 ```text
-Ncore_Film&Sori_letöltő/
+ncore-plex-downloader/
 ├── .env.example              # Konfigurációs sablon
 ├── .gitignore                # Git kizárások
 ├── AGENTS.md                 # Részletes kódolási és AI specifikáció
 ├── README.md                 # Ez a dokumentum
 ├── requirements.txt          # Python csomagfüggőségek
+├── run_app.bat               # Windows duplakattintásos indító
+├── build_desktop_exe.bat     # Asztali .exe készítő és automata felülíró
+├── launcher.py               # Asztali böngészőindító belépési pont
+├── tests/                    # Átfogó tesztcsomag (pytest)
 └── src/
-    ├── config/               # Pydantic beállítások
-    ├── models/               # Adatstruktúrák
+    ├── config/               # Pydantic beállítások (.env)
+    ├── models/               # Adatstruktúrák (MediaItem, TorrentRelease)
     ├── services/             # TMDB, nCore, Felirat, qBittorrent és Plex modulok
-    ├── core/                 # Szervező és munkafolyamat-vezérlő
-    └── ui/                   # Felhasználói felület (WebUI)
+    ├── core/                 # Szervező (Hardlink), orkesztrátor
+    └── ui/                   # Streamlit Apa-barát felület
 ```
 
 ---
