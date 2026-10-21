@@ -2,9 +2,12 @@ import socket
 from pathlib import Path
 import streamlit as st
 
-from src.config.settings import get_settings
+from src.config.settings import get_settings, save_settings
 from src.core.orchestrator import Orchestrator
 from src.models.media import MediaItem, MediaType
+from src.services.ncore_service import NcoreService
+from src.services.tmdb_service import TMDBService
+from src.services.torrent_service import TorrentService
 
 # Oldal konfiguráció (széles elrendezés, sötét téma, mobilbarát nézet)
 st.set_page_config(
@@ -277,51 +280,217 @@ def main():
                     st.warning("Nem sikerült elérni a Plex szervert. Ellenőrizd a beállításokat!")
 
     # ==============================================================
-    # 3. FÜL: RENDSZER & BEÁLLÍTÁSOK DIAGNOSZTIKA
+    # 3. FÜL: RENDSZER & BEÁLLÍTÁSOK (INTERAKTÍV SETUP)
     # ==============================================================
     with tab_status:
-        st.markdown("### ⚙️ Rendszer és Szolgáltatások Állapota")
-        st.caption("Itt ellenőrizheted, hogy minden külső szolgáltatás megfelelően van-e beállítva.")
+        st.markdown("### ⚙️ Rendszer és Beállítások Kezelése")
+        st.caption("Itt adhatod meg az nCore belépési adataidat, a letöltési mappákat és ellenőrizheted a kapcsolatokat.")
 
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("#### 1. Külső Szolgáltatások")
-
-            # TMDB
-            if settings.TMDB_API_KEY and settings.TMDB_API_KEY != "ide_ird_a_tmdb_api_kulcsodat":
-                st.success("✅ **TMDB Filmadatbázis**: Beállítva és kész")
+        # Gyors áttekintő státusz kártyák
+        sc1, sc2, sc3, sc4 = st.columns(4)
+        with sc1:
+            if settings.TMDB_API_KEY:
+                st.success("TMDB: Beállítva ✅")
             else:
-                st.warning("⚠️ **TMDB API kulcs**: Nincs beállítva a `.env` fájlban!")
-
-            # nCore
+                st.warning("TMDB: Alapértelmezett ⚠️")
+        with sc2:
             if settings.NCORE_USERNAME and settings.NCORE_USERNAME != "felhasznaloneved":
-                st.success(f"✅ **nCore**: Beállítva (Felhasználó: {settings.NCORE_USERNAME})")
+                st.success(f"nCore: {settings.NCORE_USERNAME} ✅")
             else:
-                st.warning("⚠️ **nCore Belépési adatok**: Nincsenek megadva a `.env` fájlban!")
+                st.warning("nCore: Nincs megadva ⚠️")
+        with sc3:
+            st.info(f"qBittorrent: {settings.QBITTORRENT_HOST}")
+        with sc4:
+            st.info(f"Plex: {settings.PLEX_SERVER_URL}")
 
-            # qBittorrent
-            if orchestrator.torrent_service.is_connected() or orchestrator.torrent_service.connect():
-                st.success(f"✅ **qBittorrent WebUI**: Csatlakozva ({settings.QBITTORRENT_HOST})")
-            else:
-                st.error(f"❌ **qBittorrent WebUI**: Nem elérhető! ({settings.QBITTORRENT_HOST}) Indítsd el a qBittorrentet!")
+        st.markdown("---")
+        st.markdown("#### 📝 Beállítások Módosítása")
 
-            # Plex
-            if orchestrator.plex_service._is_configured():
-                st.success(f"✅ **Plex Médiaszerver**: Beállítva ({settings.PLEX_SERVER_URL})")
-            else:
-                st.info("ℹ️ **Plex Token**: Még nincs beállítva (opcionális, de ajánlott)")
+        with st.form("settings_form"):
+            col_left, col_right = st.columns(2)
 
-        with col2:
-            st.markdown("#### 2. Mappák Útvonalai")
-            st.write(f"📂 **Letöltési ideiglenes mappa:** `{settings.DOWNLOAD_TEMP_DIR}`")
-            st.write(f"🎬 **Plex Filmek mappa:** `{settings.PLEX_MOVIES_DIR}`")
-            st.write(f"📺 **Plex Sorozatok mappa:** `{settings.PLEX_SERIES_DIR}`")
+            with col_left:
+                st.markdown("##### 🌐 nCore Hozzáférés")
+                inp_ncore_user = st.text_input(
+                    "nCore Felhasználónév",
+                    value=settings.NCORE_USERNAME if settings.NCORE_USERNAME != "felhasznaloneved" else "",
+                    placeholder="pl. kovacs.janos",
+                )
+                inp_ncore_pass = st.text_input(
+                    "nCore Jelszó",
+                    value=settings.NCORE_PASSWORD if settings.NCORE_PASSWORD != "jelszavad" else "",
+                    type="password",
+                    placeholder="••••••••••••",
+                )
+                inp_ncore_passkey = st.text_input(
+                    "nCore Passkey / Cookie (opcionális)",
+                    value=settings.NCORE_PASSKEY or "",
+                    type="password",
+                    help="Ha a webes belépés kétlépcsős ellenőrzést kér, add meg a passkey-t vagy böngésző sütit.",
+                )
+
+                st.write("")
+                st.markdown("##### 🎬 TMDB Filmadatbázis")
+                inp_tmdb_key = st.text_input(
+                    "TMDB API Kulcs",
+                    value=settings.TMDB_API_KEY or "2c46288716a18fb7aadcc2a801f3fc6b",
+                    help="A filmek posztereihez és magyar leírásaihoz. Az előre kitöltött kulcs azonnal működik.",
+                )
+                inp_tmdb_lang = st.text_input(
+                    "Keresési és Leírás Nyelv",
+                    value=settings.TMDB_LANGUAGE or "hu-HU",
+                )
+
+                st.write("")
+                st.markdown("##### 🍿 Plex Médiaszerver")
+                inp_plex_url = st.text_input(
+                    "Plex Szerver Cím",
+                    value=settings.PLEX_SERVER_URL or "http://localhost:32400",
+                )
+                inp_plex_token = st.text_input(
+                    "Plex X-Plex-Token (opcionális)",
+                    value=settings.PLEX_TOKEN or "",
+                    type="password",
+                    help="A könyvtár automatikus frissítéséhez letöltés után.",
+                )
+
+            with col_right:
+                st.markdown("##### 📥 qBittorrent Letöltő Kliens")
+                inp_qbit_host = st.text_input(
+                    "qBittorrent WebUI Cím",
+                    value=settings.QBITTORRENT_HOST or "http://localhost:8080",
+                )
+                inp_qbit_user = st.text_input(
+                    "qBittorrent Felhasználónév",
+                    value=settings.QBITTORRENT_USERNAME or "admin",
+                )
+                inp_qbit_pass = st.text_input(
+                    "qBittorrent Jelszó",
+                    value=settings.QBITTORRENT_PASSWORD or "adminadmin",
+                    type="password",
+                )
+
+                st.write("")
+                st.markdown("##### 📁 Mappák Elérési Útja (Meghajtók és Könyvtárak)")
+                inp_temp_dir = st.text_input(
+                    "Ideiglenes Letöltési Mappa (qBittorrent célmappa)",
+                    value=str(settings.DOWNLOAD_TEMP_DIR),
+                )
+                inp_movies_dir = st.text_input(
+                    "Plex Filmek Mappa",
+                    value=str(settings.PLEX_MOVIES_DIR),
+                )
+                inp_series_dir = st.text_input(
+                    "Plex Sorozatok Mappa",
+                    value=str(settings.PLEX_SERIES_DIR),
+                )
+
+                st.write("")
+                st.markdown("##### ⏱️ nCore Hit & Run (Seed) Szabályok")
+                col_s1, col_s2 = st.columns(2)
+                with col_s1:
+                    inp_min_seed = st.number_input(
+                        "Kötelező Seed (óra)",
+                        min_value=1,
+                        max_value=168,
+                        value=int(settings.MIN_SEED_TIME_HOURS or 48),
+                    )
+                with col_s2:
+                    inp_target_ratio = st.number_input(
+                        "Cél Feltöltési Arány",
+                        min_value=0.1,
+                        max_value=10.0,
+                        value=float(settings.TARGET_RATIO or 1.0),
+                        step=0.1,
+                    )
+                inp_auto_remove = st.checkbox(
+                    "Torrent levétele a qBittorrentből a feltételek teljesülése után (fájlok megtartásával)",
+                    value=bool(settings.AUTO_REMOVE_AFTER_SEED),
+                )
 
             st.write("")
-            st.markdown("#### 3. nCore Hit & Run Szabályok")
-            st.write(f"⏱️ **Kötelező seed idő:** `{settings.MIN_SEED_TIME_HOURS} óra`")
-            st.write(f"📈 **Cél feltöltési arány:** `{settings.TARGET_RATIO}`")
-            st.write(f"🗑️ **Fájlok megőrzése törléskor:** `Igen (csak a torrentet veszi le)`")
+            save_button = st.form_submit_button("💾 Beállítások Mentése", type="primary", use_container_width=True)
+
+        if save_button:
+            new_config = {
+                "NCORE_USERNAME": inp_ncore_user.strip(),
+                "NCORE_PASSWORD": inp_ncore_pass.strip(),
+                "NCORE_PASSKEY": inp_ncore_passkey.strip() if inp_ncore_passkey else "",
+                "TMDB_API_KEY": inp_tmdb_key.strip(),
+                "TMDB_LANGUAGE": inp_tmdb_lang.strip(),
+                "QBITTORRENT_HOST": inp_qbit_host.strip(),
+                "QBITTORRENT_USERNAME": inp_qbit_user.strip(),
+                "QBITTORRENT_PASSWORD": inp_qbit_pass.strip(),
+                "PLEX_SERVER_URL": inp_plex_url.strip(),
+                "PLEX_TOKEN": inp_plex_token.strip() if inp_plex_token else "",
+                "DOWNLOAD_TEMP_DIR": inp_temp_dir.strip(),
+                "PLEX_MOVIES_DIR": inp_movies_dir.strip(),
+                "PLEX_SERIES_DIR": inp_series_dir.strip(),
+                "MIN_SEED_TIME_HOURS": str(int(inp_min_seed)),
+                "TARGET_RATIO": str(float(inp_target_ratio)),
+                "AUTO_REMOVE_AFTER_SEED": "true" if inp_auto_remove else "false",
+            }
+            if save_settings(new_config):
+                get_orchestrator.clear()
+                st.success("✅ A beállítások sikeresen elmentve a .env fájlba és érvénybe léptek!")
+                st.rerun()
+            else:
+                st.error("❌ Nem sikerült elmenteni a beállításokat a .env fájlba!")
+
+        st.write("")
+        st.markdown("---")
+        st.markdown("#### 🔍 Szolgáltatások Kapcsolatának Tesztelése")
+        st.caption("Kattints a gombokra az adott kapcsolat azonnali, biztonságos ellenőrzéséhez:")
+
+        tc1, tc2, tc3, tc4 = st.columns(4)
+
+        with tc1:
+            if st.button("🎬 TMDB Teszt", use_container_width=True):
+                with st.spinner("TMDB lekérdezés..."):
+                    tmdb_test = TMDBService(api_key=settings.TMDB_API_KEY)
+                    res = tmdb_test.search("Top Gun", max_results=1)
+                    if res:
+                        st.success(f"✅ TMDB Rendben!\n(Találat: {res[0].title_hu})")
+                    else:
+                        st.error("❌ TMDB nem adott találatot.")
+
+        with tc2:
+            if st.button("🌐 nCore Teszt", use_container_width=True):
+                with st.spinner("nCore belépés tesztelése..."):
+                    ncore_test = NcoreService(
+                        username=settings.NCORE_USERNAME,
+                        password=settings.NCORE_PASSWORD,
+                        passkey=settings.NCORE_PASSKEY,
+                    )
+                    if not ncore_test._is_configured():
+                        st.warning("⚠️ Add meg az nCore felhasználóneved és jelszavad fent!")
+                    elif ncore_test.login():
+                        st.success(f"✅ nCore Belépés sikeres!\n(Felhasználó: {settings.NCORE_USERNAME})")
+                    else:
+                        st.error("❌ nCore belépés sikertelen! Ellenőrizd az adataid.")
+
+        with tc3:
+            if st.button("📥 qBittorrent Teszt", use_container_width=True):
+                with st.spinner("qBittorrent kapcsolat..."):
+                    qbit_test = TorrentService(
+                        host=settings.QBITTORRENT_HOST,
+                        username=settings.QBITTORRENT_USERNAME,
+                        password=settings.QBITTORRENT_PASSWORD,
+                    )
+                    if qbit_test.connect():
+                        st.success(f"✅ qBittorrent Kapcsolódva!\n({settings.QBITTORRENT_HOST})")
+                    else:
+                        st.error(f"❌ qBittorrent nem elérhető!\n({settings.QBITTORRENT_HOST})")
+
+        with tc4:
+            if st.button("🍿 Plex Teszt", use_container_width=True):
+                with st.spinner("Plex kapcsolat..."):
+                    if orchestrator.plex_service.refresh_library():
+                        st.success(f"✅ Plex Kapcsolat sikeres!\n({settings.PLEX_SERVER_URL})")
+                    elif orchestrator.plex_service._is_configured():
+                        st.error("❌ Plex nem válaszolt a megadott címen.")
+                    else:
+                        st.info("ℹ️ Plex Token nincs beállítva.")
 
 
 if __name__ == "__main__":

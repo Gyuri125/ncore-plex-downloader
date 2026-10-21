@@ -65,6 +65,7 @@ temp/
 torrents/
 downloads_scratch/
 cache/
+data/
 
 # OS generated files
 .DS_Store

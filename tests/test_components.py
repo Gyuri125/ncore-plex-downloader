@@ -87,3 +87,17 @@ def test_subtitle_encoding():
     
     decoded = SubtitleService._decode_hungarian_text(cp1250_bytes)
     assert decoded == text
+
+
+def test_save_settings_helper(tmp_path):
+    from src.config.settings import save_settings, get_settings
+    env_file = tmp_path / ".env"
+    env_file.write_text("TMDB_API_KEY=old_key\nNCORE_USERNAME=old_user\n", encoding="utf-8")
+    
+    success = save_settings({"NCORE_USERNAME": "new_user", "MIN_SEED_TIME_HOURS": "72"}, env_path=env_file)
+    assert success is True
+    
+    content = env_file.read_text(encoding="utf-8")
+    assert "NCORE_USERNAME=new_user" in content
+    assert "MIN_SEED_TIME_HOURS=72" in content
+    assert "TMDB_API_KEY=old_key" in content

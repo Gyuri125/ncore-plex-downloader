@@ -70,3 +70,50 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     """Singleton getter a beállításokhoz."""
     return Settings()
+
+
+def save_settings(updates: dict, env_path: Optional[Path] = None) -> bool:
+    """
+    Frissíti vagy létrehozza a .env fájlt a megadott értékekkel, és üríti a beállítások cache-ét.
+    """
+    if env_path is None:
+        target = Path(".env")
+        if not target.exists():
+            candidate = Path(__file__).resolve().parent.parent.parent / ".env"
+            if candidate.exists() or not target.parent.is_dir():
+                target = candidate
+        env_path = target
+
+    existing_lines = []
+    if env_path.exists():
+        try:
+            with open(env_path, "r", encoding="utf-8") as f:
+                existing_lines = f.readlines()
+        except Exception:
+            existing_lines = []
+
+    written_keys = set()
+    new_lines = []
+    for line in existing_lines:
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#") and "=" in stripped:
+            key, _ = stripped.split("=", 1)
+            key = key.strip()
+            if key in updates:
+                val = updates[key]
+                new_lines.append(f"{key}={val if val is not None else ''}\n")
+                written_keys.add(key)
+                continue
+        new_lines.append(line)
+
+    for key, val in updates.items():
+        if key not in written_keys:
+            new_lines.append(f"{key}={val if val is not None else ''}\n")
+
+    try:
+        with open(env_path, "w", encoding="utf-8") as f:
+            f.writelines(new_lines)
+        get_settings.cache_clear()
+        return True
+    except Exception:
+        return False

@@ -1,5 +1,6 @@
 @echo off
 chcp 65001 > nul
+cd /d "%~dp0"
 title Ncore Film & Sorozat Letöltő - Automata Média Rendszer
 
 echo ==============================================================
