@@ -32,28 +32,46 @@ def open_browser(url: str):
 
 
 def find_project_root() -> Path:
-    """Megkeresi a projekt gyökérmappáját."""
-    # 1. Ha a projekt mappájából fut
+    """Megkeresi a projekt gyökérmappáját tetszőleges számítógépen és könyvtárban."""
+    # 1. Ha a launcher.py fájl mellett van a forráskód
     current_dir = Path(__file__).resolve().parent
     if (current_dir / "src" / "ui" / "app.py").exists():
         return current_dir
 
-    # 2. Ha az Asztalról vagy máshonnan fut az exe, fix projekt mappa
+    # 2. Ha PyInstaller onefile EXE fut, a futtatható fájl mappáját vizsgáljuk
+    try:
+        exe_dir = Path(sys.executable).resolve().parent
+        if (exe_dir / "src" / "ui" / "app.py").exists():
+            return exe_dir
+    except Exception:
+        pass
+
+    # 3. Aktuális munkakönyvtár vizsgálata
+    try:
+        cwd = Path.cwd()
+        if (cwd / "src" / "ui" / "app.py").exists():
+            return cwd
+    except Exception:
+        pass
+
+    # 4. Keresés a felhasználó standard könyvtáraiban dinamikusan
+    user_home = Path.home()
+    for sub in ["PycharmProjects", "Documents", "Desktop", "Downloads"]:
+        for cand_name in ["ncore-plex-downloader", "Ncore_Film&Sori_letöltő", "Ncore_Media_Letolto", "ncore_downloader"]:
+            cand = user_home / sub / cand_name
+            if (cand / "src" / "ui" / "app.py").exists():
+                return cand
+
+    # 5. Fix teszt útvonal fallback
     fixed_path = Path(r"C:\Users\gyuri\PycharmProjects\Ncore_Film&Sori_letöltő")
     if (fixed_path / "src" / "ui" / "app.py").exists():
         return fixed_path
-
-    # 3. Keresés a felhasználó PycharmProjects mappájában
-    user_home = Path.home()
-    candidate = user_home / "PycharmProjects" / "Ncore_Film&Sori_letöltő"
-    if (candidate / "src" / "ui" / "app.py").exists():
-        return candidate
 
     return current_dir
 
 
 def find_python_interpreter(project_root: Path) -> str:
-    """Megkeresi a megfelelő Python értelmezőt (.venv vagy rendszer szintű)."""
+    """Megkeresi a megfelelő Python értelmezőt (.venv, venv, PATH vagy dinamikus AppData)."""
     # 1. .venv a projektben
     venv_py = project_root / ".venv" / "Scripts" / "python.exe"
     if venv_py.exists():
@@ -65,14 +83,20 @@ def find_python_interpreter(project_root: Path) -> str:
         return str(venv_py2)
 
     # 3. Rendszer python a PATH-on
-    which_py = shutil.which("python")
+    which_py = shutil.which("python") or shutil.which("python3")
     if which_py:
         return which_py
 
-    # 4. Standard Python 3.12 telepítési mappa
-    default_py312 = Path(r"C:\Users\gyuri\AppData\Local\Programs\Python\Python312\python.exe")
-    if default_py312.exists():
-        return str(default_py312)
+    # 4. Dinamikus keresés a felhasználó AppData\Local\Programs\Python mappájában
+    try:
+        user_python_dir = Path.home() / "AppData" / "Local" / "Programs" / "Python"
+        if user_python_dir.exists():
+            candidates = sorted(user_python_dir.glob("Python*/python.exe"), reverse=True)
+            for cand in candidates:
+                if cand.exists():
+                    return str(cand)
+    except Exception:
+        pass
 
     return "python"
 

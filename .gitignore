@@ -26,6 +26,10 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+*.zip
+*.7z
+*.rar
+*.tar.gz
 
 # Virtual environments
 venv/
@@ -49,6 +53,7 @@ out/
 .env
 .env.*
 *.env
+.streamlit/secrets.toml
 config.local.yaml
 credentials.json
 cookies.txt
@@ -58,6 +63,8 @@ cookies.txt
 *.key
 *.pem
 *.secret
+*.pfx
+*.crt
 
 # Temporary and log files
 *.log
