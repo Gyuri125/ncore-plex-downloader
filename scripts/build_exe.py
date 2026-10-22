@@ -27,6 +27,18 @@ def main():
     # 1. Futó folyamat leállítása
     print("[1/4] Futo folyamatok ellenorzese es bezarasa...")
     subprocess.run(["taskkill", "/f", "/im", exe_name], capture_output=True)
+    try:
+        import psutil
+        for conn in psutil.net_connections(kind="inet"):
+            if conn.laddr and conn.laddr.port == 8501 and conn.pid:
+                try:
+                    p = psutil.Process(conn.pid)
+                    print(f"       -> Streamlit folyamat leallitasa (PID: {conn.pid})...")
+                    p.kill()
+                except Exception:
+                    pass
+    except Exception:
+        pass
 
     # 2. PyInstaller fordítás
     print("[2/4] Legfrissebb forraskod forditasa (PyInstaller)...")
@@ -37,11 +49,17 @@ def main():
         "--noconfirm",
         "--clean",
         "--onefile",
-        "--console",
+        "--windowed",
+        "--hidden-import=pystray",
+        "--hidden-import=PIL",
+        "--hidden-import=qrcode",
+        "--hidden-import=psutil",
+        "--hidden-import=loguru",
         "--name",
         "Ncore_Media_Letolto",
         "launcher.py",
     ]
+
     res = subprocess.run(cmd)
     if res.returncode != 0:
         print("\n[HIBA] A PyInstaller forditas nem sikerult!")

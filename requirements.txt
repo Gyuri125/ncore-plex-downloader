@@ -22,5 +22,10 @@ babelfish>=0.6.0
 # Logging & Utilities
 loguru>=0.7.2
 
-# User Interface (Egyszerű, modern felület)
+# User Interface & Desktop Integration (Egyszerű, modern felület & Tálcaikon)
 streamlit>=1.32.0
+pystray>=0.19.5
+Pillow>=10.2.0
+psutil>=5.9.8
+qrcode>=7.4.2
+

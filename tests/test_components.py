@@ -101,3 +101,39 @@ def test_save_settings_helper(tmp_path):
     assert "NCORE_USERNAME=new_user" in content
     assert "MIN_SEED_TIME_HOURS=72" in content
     assert "TMDB_API_KEY=old_key" in content
+
+
+def test_series_season_extraction_and_matching():
+    from src.models.media import extract_season_tag, extract_season_num
+
+    assert extract_season_num("The.Vampire.Diaries.S08.1080p.BluRay") == 8
+    assert extract_season_tag("The.Vampire.Diaries.S08.1080p.BluRay") == "S08 (8. Évad)"
+
+    assert extract_season_num("Vámpírnaplók S07 720p") == 7
+    assert extract_season_tag("Vámpírnaplók S07 720p") == "S07 (7. Évad)"
+
+    assert extract_season_num("Breaking.Bad.1.Evad.Hun") == 1
+    assert extract_season_tag("Breaking.Bad.1.Evad.Hun") == "S01 (1. Évad)"
+
+    assert extract_season_num("The.Walking.Dead.S01-S11.Complete") == -1
+    assert "Csomag" in extract_season_tag("The.Walking.Dead.S01-S11.Complete")
+
+    rel = TorrentRelease(
+        torrent_id="99",
+        title="The.Vampire.Diaries.S08.1080p.BluRay.REMUX",
+        category="hdser_hun",
+        has_hungarian_audio=True
+    )
+    assert rel.season_num == 8
+    assert rel.season_tag == "S08 (8. Évad)"
+
+    # Series year difference should not disqualify release (debut 2009, S08 aired 2017)
+    service = NcoreService(username="test", password="test")
+    series_item = MediaItem(
+        tmdb_id=18165,
+        media_type=MediaType.TV,
+        title_hu="Vámpírnaplók",
+        title_en="The Vampire Diaries",
+        year=2009,
+    )
+    assert service.verify_release_match(rel, series_item) is True

@@ -117,6 +117,13 @@ class MediaOrganizer:
 
         for video in video_files:
             season, episode = self._extract_season_episode(video.name)
+            if not season and release and release.season_num and release.season_num > 0:
+                season = release.season_num
+            if not season:
+                parent_s, _ = self._extract_season_episode(video.parent.name)
+                if parent_s:
+                    season = parent_s
+
             season_num = season or 1
             season_folder = series_dir / f"Season {season_num:02d}"
             season_folder.mkdir(parents=True, exist_ok=True)
@@ -188,7 +195,7 @@ class MediaOrganizer:
     @staticmethod
     def _extract_season_episode(filename: str):
         """
-        Kinyeri az évad és epizód számot a fájlnévből (pl. S01E04 vagy 1x04).
+        Kinyeri az évad és epizód számot a fájlnévből (pl. S01E04 vagy 1x04 vagy 01.mkv).
         """
         m = re.search(r"[sS](\d{1,2})[eE](\d{1,2})", filename)
         if m:
@@ -198,7 +205,18 @@ class MediaOrganizer:
         if m:
             return int(m.group(1)), int(m.group(2))
 
-        return None, None
+        m_s = re.search(r"\b[sS](\d{1,2})\b", filename)
+        season = int(m_s.group(1)) if m_s else None
+
+        m_e = re.search(r"\b[eE](\d{1,2})\b", filename)
+        episode = int(m_e.group(1)) if m_e else None
+
+        if not episode:
+            m_num = re.search(r"(?:^|[^\d])(\d{1,2})\.(?:mkv|mp4|avi)", filename, re.IGNORECASE)
+            if m_num:
+                episode = int(m_num.group(1))
+
+        return season, episode
 
     @staticmethod
     def _extract_quality_tag(title: str) -> str:

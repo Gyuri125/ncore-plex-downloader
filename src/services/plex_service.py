@@ -98,3 +98,23 @@ class PlexService:
     def refresh_series(self) -> bool:
         """Kifejezetten a sorozatok szekció frissítése."""
         return self.refresh_library(media_type="show")
+
+    def has_media(self, title: str, year: Optional[int] = None) -> bool:
+        """Ellenőrzi, hogy a film vagy sorozat már szerepel-e a Plex könyvtárban."""
+        if not self._is_configured():
+            return False
+        if not self.is_connected() and not self.connect():
+            return False
+        try:
+            results = self.server.library.search(title)
+            title_lower = title.strip().lower()
+            for res in results:
+                if res.title.strip().lower() == title_lower:
+                    if year and hasattr(res, "year") and res.year:
+                        if abs(res.year - year) <= 1:
+                            return True
+                    else:
+                        return True
+            return False
+        except Exception:
+            return False

@@ -6,6 +6,7 @@ from src.services.plex_service import PlexService
 from src.services.subtitle_service import SubtitleService
 from src.services.tmdb_service import TMDBService
 from src.services.torrent_service import TorrentService
+from src.services.tray_service import TrayService
 
 __all__ = [
     "TMDBService",
@@ -13,7 +14,9 @@ __all__ = [
     "TorrentService",
     "SubtitleService",
     "PlexService",
+    "TrayService",
 ]
+
 
 
 

@@ -1,4 +1,7 @@
+import os
+import shutil
 import socket
+import subprocess
 import time
 import urllib.parse
 from pathlib import Path
@@ -40,36 +43,136 @@ class TorrentService:
         self.client: Optional["qbittorrentapi.Client"] = None
         self._last_failed_connect = 0.0
 
-    def connect(self) -> bool:
+    @staticmethod
+    def find_qbittorrent_exe() -> Optional[Path]:
+        """
+        Megkeresi a qBittorrent futtatható állományát (.exe) a gépen.
+        """
+        settings = get_settings()
+        if settings.QBITTORRENT_EXE_PATH:
+            p = Path(settings.QBITTORRENT_EXE_PATH)
+            if p.exists() and p.is_file():
+                return p
+
+        candidates = [
+            Path(r"C:\Program Files\qBittorrent\qbittorrent.exe"),
+            Path(r"C:\Program Files (x86)\qBittorrent\qbittorrent.exe"),
+            Path.home() / "AppData" / "Local" / "Programs" / "qBittorrent" / "qbittorrent.exe",
+        ]
+        for c in candidates:
+            if c.exists() and c.is_file():
+                return c
+
+        which_path = shutil.which("qbittorrent")
+        if which_path:
+            p = Path(which_path)
+            if p.exists():
+                return p
+
+        return None
+
+    @classmethod
+    def is_process_running(cls) -> bool:
+        """Ellenőrzi, hogy a qBittorrent folyamat fut-e már a memóriában."""
+        try:
+            import psutil
+            for p in psutil.process_iter(["name"]):
+                name = (p.info["name"] or "").lower()
+                if "qbittorrent" in name:
+                    return True
+        except Exception:
+            pass
+        return False
+
+    @classmethod
+    def ensure_qbittorrent_running(cls, wait_timeout: float = 12.0) -> bool:
+        """
+        Ha a qBittorrent nem fut vagy a WebUI nem válaszol, elindítja a háttérben
+        és megvárja, amíg a WebUI (8080) elérhetővé válik.
+        """
+        settings = get_settings()
+        parsed = urllib.parse.urlparse(settings.QBITTORRENT_HOST)
+        host_name = parsed.hostname or "127.0.0.1"
+        port_num = parsed.port or 8080
+
+        def is_port_open() -> bool:
+            try:
+                s = socket.create_connection((host_name, port_num), timeout=0.3)
+                s.close()
+                return True
+            except Exception:
+                return False
+
+        if is_port_open():
+            return True
+
+        exe_path = cls.find_qbittorrent_exe()
+        if not exe_path:
+            logger.warning("A qBittorrent.exe nem található az ismert elérési utakon.")
+            return False
+
+        logger.info(f"qBittorrent indítása a háttérben: {exe_path}")
+        try:
+            if hasattr(os, "startfile"):
+                os.startfile(str(exe_path))
+            else:
+                subprocess.Popen([str(exe_path)], creationflags=0x00000008)
+        except Exception as e:
+            logger.error(f"Hiba a qBittorrent indításakor: {e}")
+            return False
+
+        start_time = time.time()
+        while time.time() - start_time < wait_timeout:
+            time.sleep(0.8)
+            if is_port_open():
+                logger.info(f"qBittorrent sikeresen elindult és a WebUI elérhető ({host_name}:{port_num})!")
+                return True
+
+        return is_port_open()
+
+    def connect(self, auto_start: bool = True) -> bool:
         """
         Csatlakozik a qBittorrent WebUI felületéhez gyors időkéréssel.
+        Ha a kapcsolat nem él és auto_start=True, kísérletet tesz a qBittorrent elindítására.
         """
         if qbittorrentapi is None:
             logger.error("A 'qbittorrent-api' könyvtár nincs telepítve! Futtasd: pip install qbittorrent-api")
             return False
 
         # Ha nemrég próbáltuk és nem fut, azonnal lépjünk tovább
-        if time.time() - self._last_failed_connect < 15.0:
+        if time.time() - self._last_failed_connect < 10.0:
             return False
 
-        # Előzetes gyors socket ellenőrzés (ha a port zárva van, 0.2s alatt kiderül a 25s requests retry helyett)
+        # Előzetes gyors socket ellenőrzés
+        parsed = urllib.parse.urlparse(self.host)
+        host_name = parsed.hostname or "127.0.0.1"
+        port_num = parsed.port or 8080
+
+        port_open = False
         try:
-            parsed = urllib.parse.urlparse(self.host)
-            host_name = parsed.hostname or "127.0.0.1"
-            port_num = parsed.port or 8080
-            sock = socket.create_connection((host_name, port_num), timeout=0.2)
+            sock = socket.create_connection((host_name, port_num), timeout=0.25)
             sock.close()
+            port_open = True
         except Exception:
-            self.client = None
-            self._last_failed_connect = time.time()
-            return False
+            port_open = False
+
+        if not port_open:
+            if auto_start and (host_name in ("127.0.0.1", "localhost")):
+                logger.info("A qBittorrent WebUI zárva van, kísérlet az automatikus indításra...")
+                if self.ensure_qbittorrent_running():
+                    port_open = True
+
+            if not port_open:
+                self.client = None
+                self._last_failed_connect = time.time()
+                return False
 
         try:
             self.client = qbittorrentapi.Client(
                 host=self.host,
                 username=self.username,
                 password=self.password,
-                REQUESTS_ARGS={"timeout": (1.0, 2.0)},
+                REQUESTS_ARGS={"timeout": (1.0, 2.5)},
             )
             self.client.auth_log_in()
             version = self.client.app.version
@@ -92,6 +195,7 @@ class TorrentService:
             self.client = None
             self._last_failed_connect = time.time()
             return False
+
 
     def is_connected(self) -> bool:
         """
@@ -292,3 +396,44 @@ class TorrentService:
         except Exception as e:
             logger.error(f"Hiba a letöltések listázásakor: {str(e)}")
             return []
+
+    def get_active_summary(self) -> Dict[str, Any]:
+        """
+        Gyors összefoglaló a tálcaikon tooltip és állapotkijelzés számára.
+        """
+        downloads = self.list_active_downloads()
+        if not downloads:
+            return {
+                "active_count": 0,
+                "download_speed_kb": 0.0,
+                "summary": "Nincs aktív letöltés (Minden kész)",
+                "tooltip": "Ncore Letöltő: Nincs aktív letöltés (Minden kész)",
+            }
+
+        active_items = [d for d in downloads if not d.get("is_completed")]
+        total_speed = sum(d.get("download_speed_kb", 0) for d in downloads)
+
+        if not active_items:
+            return {
+                "active_count": 0,
+                "download_speed_kb": total_speed,
+                "summary": f"{len(downloads)} letöltés kész (Seedelés folyamatban)",
+                "tooltip": f"Ncore Letöltő: {len(downloads)} kész | Feltöltés: {round(total_speed / 1024, 1)} MB/s",
+            }
+
+        progress_strs = [f"{d['progress']}%" for d in active_items[:3]]
+        speed_str = (
+            f"{round(total_speed / 1024, 1)} MB/s"
+            if total_speed >= 1024
+            else f"{int(total_speed)} KB/s"
+        )
+        summary_txt = f"{len(active_items)} letöltés ({', '.join(progress_strs)}) | {speed_str}"
+        tooltip_txt = f"🎬 Ncore Letöltő: {summary_txt}"
+
+        return {
+            "active_count": len(active_items),
+            "download_speed_kb": total_speed,
+            "summary": summary_txt,
+            "tooltip": tooltip_txt,
+        }
+

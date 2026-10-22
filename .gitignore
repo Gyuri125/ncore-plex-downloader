@@ -47,11 +47,17 @@ out/
 
 # Environment and sensitive credentials
 .env
-.env.local
+.env.*
+*.env
 config.local.yaml
 credentials.json
 cookies.txt
 *.cookie
+*.session
+*.token
+*.key
+*.pem
+*.secret
 
 # Temporary and log files
 *.log

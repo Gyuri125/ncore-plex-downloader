@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     QBITTORRENT_HOST: str = Field(default="http://localhost:8080", description="qBittorrent WebUI URL")
     QBITTORRENT_USERNAME: str = Field(default="admin", description="qBittorrent WebUI felhasználónév")
     QBITTORRENT_PASSWORD: str = Field(default="adminadmin", description="qBittorrent WebUI jelszó")
+    QBITTORRENT_EXE_PATH: Optional[str] = Field(
+        default=None,
+        description="qBittorrent.exe pontos elérési útja (ha nincs kitöltve, automatikusan megkeresi)"
+    )
 
     # nCore Hit & Run (HnR) / Seedelési szabályok
     MIN_SEED_TIME_HOURS: int = Field(default=48, description="Minimum seedelési idő órában (pl. 48)")

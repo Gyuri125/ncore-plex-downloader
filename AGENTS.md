@@ -119,10 +119,25 @@ Ncore_Film&Sori_letöltő/
 ### F. Kezelőfelület és Hálózati Elérés (ui/app.py)
 - **Többeszközös hozzáférés**:
   - Az alkalmazás a háttérben a helyi PC-n fut, de a felület böngészőből elérhető PC-ről és **mobiltelefonról / tabletről** is a helyi Wi-Fi hálózaton keresztül (pl. `http://192.168.1.X:8501`).
-  - Reszponzív kártyás megjelenés: mobilon egy oszlopban nagy érintőgombokkal és borítókkal jelennek meg a filmek, PC-n tágas rácsos elrendezésben.
-  - Opcionális: Később egy dedikált mobilapp (pl. Flutter/React Native) is könnyen ráköthető, mivel a háttérlogika tiszta service rétegre épül.
+  - **Mobil QR-kód**: A felület tetején egyetlen kattintással előhívható a mobil csatlakozáshoz szükséges QR-kód, így nem szükséges manuálisan IP-címet gépelni telefonon.
+  - **Lemezterület védelem**: A célkönyvtárak szabad kapacitásának folyamatos kijelzése, figyelmeztetés alacsony tárhely esetén (<20 GB).
+
+### G. Windows Rendszertálca & Háttérfolyamat (tray_service.py & background_worker.py)
+- **qBittorrent Automatikus Indítása**:
+  - Ha az alkalmazás indításakor a qBittorrent nem fut a háttérben vagy nem válaszol a WebUI, a rendszer automatikusan megkeresi az állományt a merevlemezen és elindítja a háttérben, megvárva a WebUI csatlakozását.
+- **Windows Tálcaikon (System Tray - pystray)**:
+  - Bal / dupla kattintásra azonnal megnyitja vagy visszahozza a webes felületet, ha véletlenül bezárták a lapot.
+  - Egér ráhúzásra (Hover Tooltip): Élőben mutatja a folyamatban lévő letöltések számát, százalékát és a sebességet.
+  - Jobb klikk menü: WebUI, qBittorrent, Plex, célmappák megnyitása, azonnali Plex frissítés és tiszta kilépés.
+- **Önálló Háttérfolyamat (Background Worker Daemon)**:
+  - Egy csendes háttérszál 15 másodpercenként futtatja a feladatok ellenőrzését.
+  - Amint egy film elkészül, azonnal Plexbe rendezi és frissíti a Plex könyvtárat, **még akkor is, ha a böngésző be van zárva!**
+  - Kész filmeknél natív Windows Toast értesítést küld a tálca felett.
+- **Konzol ablak elrejtése**:
+  - Fekete terminál ablak nélkül, diszkréten a háttérben fut az alkalmazás.
 
 ---
+
 
 ## 4. AI Agent és Fejlesztői Irányelvek
 

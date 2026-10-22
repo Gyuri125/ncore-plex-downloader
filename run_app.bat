@@ -22,7 +22,8 @@ if exist ".venv\Scripts\activate.bat" (
 echo.
 echo [INFO] Alkalmazas inditasa a bongeszoben...
 echo.
-python -m streamlit run src/ui/app.py --server.port 8501 --server.address 0.0.0.0
+python launcher.py
+
 
 popd
 pause
