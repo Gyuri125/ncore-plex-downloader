@@ -1,7 +1,7 @@
 import io
 import shutil
 import socket
-from typing import Optional
+from typing import List, Optional, Dict, Any
 from pathlib import Path
 import streamlit as st
 
@@ -114,7 +114,11 @@ st.markdown(
 
 @st.cache_resource
 def get_orchestrator() -> Orchestrator:
-    return Orchestrator()
+    orch = Orchestrator()
+    if not hasattr(orch, "radar") or orch.radar is None:
+        from src.core.movie_radar import MovieRadarManager
+        orch.radar = MovieRadarManager()
+    return orch
 
 
 def get_local_ip() -> str:
@@ -206,10 +210,24 @@ def show_movie_details_dialog(item: MediaItem, orchestrator: Orchestrator):
         st.markdown("#### 📖 Teljes Szinopszis")
         st.markdown(item.overview or "Nincs leírás.")
 
-        if item.director:
-            st.markdown(f"🎬 **Rendező:** {item.director}")
-        if item.cast:
-            st.markdown(f"👥 **Főbb Szereplők:** {', '.join(item.cast)}")
+        if item.director or item.cast:
+            st.markdown("#### 🎭 Alkotók & Szereplők (Kattints a filmográfiáért)")
+            creator_count = (1 if item.director else 0) + len(item.cast[:3]) if item.cast else (1 if item.director else 0)
+            if creator_count > 0:
+                creator_cols = st.columns(min(4, creator_count))
+                c_idx = 0
+                if item.director and c_idx < len(creator_cols):
+                    with creator_cols[c_idx]:
+                        if st.button(f"🎬 {item.director} (Rendező)", key=f"det_dir_{item.tmdb_id}", use_container_width=True):
+                            show_person_dialog(item.director, orchestrator)
+                    c_idx += 1
+                if item.cast:
+                    for act_name in item.cast[:3]:
+                        if c_idx < len(creator_cols):
+                            with creator_cols[c_idx]:
+                                if st.button(f"🎭 {act_name}", key=f"det_act_{item.tmdb_id}_{c_idx}", use_container_width=True):
+                                    show_person_dialog(act_name, orchestrator)
+                            c_idx += 1
 
         # Előzetes videó beágyazása
         st.markdown("#### 🎬 Hivatalos Előzetes (Trailer)")
@@ -239,6 +257,94 @@ def show_movie_details_dialog(item: MediaItem, orchestrator: Orchestrator):
             st.rerun()
 
 
+@st.dialog("✨ Hasonló Filmek & Ajánlások", width="large")
+def show_similar_dialog(item: MediaItem, orchestrator: Orchestrator):
+    """Megjeleníti az adott filmhez/sorozathoz leginkább hasonló alkotásokat."""
+    st.markdown(f"### ✨ Filmek, amik tetszeni fognak ehhez: *„{item.title_hu}”*")
+    st.caption("A TMDB intelligens ajánló motorja által kiválasztott rokon alkotások azonnali nCore letöltéssel:")
+    with st.spinner("Hasonló filmek keresése a TMDB-n..."):
+        similar_items = orchestrator.get_similar_media(item, limit=6)
+    if not similar_items:
+        st.info("Nem találtunk közvetlenül hasonló címet ebben a kategóriában.")
+        return
+
+    s_cols = st.columns(2)
+    for s_idx, s_item in enumerate(similar_items):
+        with s_cols[s_idx % 2]:
+            render_media_card(s_item, orchestrator, key_prefix=f"sim_{s_idx}_{s_item.tmdb_id}")
+
+
+@st.dialog("📦 Filmgyűjtemény (Franchise / Saga)", width="large")
+def show_collection_dialog(collection_id: int, orchestrator: Orchestrator):
+    """Megjeleníti a teljes franchise részeit sorban, és egykattintásos teljes letöltést biztosít."""
+    with st.spinner("Gyűjtemény részeinek felkutatása..."):
+        coll = orchestrator.get_collection_details(collection_id)
+    if not coll or not coll.get("parts"):
+        st.error("Nem sikerült lekérni a gyűjtemény adatait a TMDB-ről.")
+        return
+
+    coll_name = coll.get("name", "Filmgyűjtemény")
+    parts = coll.get("parts", [])
+
+    c_coll_img, c_coll_info = st.columns([1, 2.5])
+    with c_coll_img:
+        if coll.get("poster_url"):
+            st.image(coll["poster_url"], use_container_width=True)
+    with c_coll_info:
+        st.markdown(f"## 📦 {coll_name}")
+        st.caption(f"Összesen: **{len(parts)} db film** időrendi sorrendben")
+        if coll.get("overview"):
+            st.markdown(f"<div style='font-size: 0.88rem; color: #94a3b8; margin-bottom: 12px;'>{coll['overview']}</div>", unsafe_allow_html=True)
+
+        if st.button(f"⚡ Teljes gyűjtemény letöltése ({len(parts)} db film)", type="primary", use_container_width=True, key=f"btn_dl_all_coll_{collection_id}"):
+            with st.spinner(f"A(z) {coll_name} filmjeinek beküldése a qBittorrentbe..."):
+                res = orchestrator.download_collection_all(collection_id)
+                if res.get("success"):
+                    st.success(f"🎉 **{res['message']}**")
+                    st.balloons()
+                else:
+                    st.error(f"❌ {res.get('message')}")
+
+    st.markdown("<hr style='margin: 16px 0; border: none; border-top: 1px solid rgba(255,255,255,0.08);'/>", unsafe_allow_html=True)
+    st.markdown(f"#### 🎬 A gyűjtemény részei időrendben ({len(parts)} rész):")
+
+    part_cols = st.columns(2)
+    for p_idx, p_item in enumerate(parts):
+        with part_cols[p_idx % 2]:
+            render_media_card(p_item, orchestrator, key_prefix=f"coll_{collection_id}_{p_idx}_{p_item.tmdb_id}")
+
+
+@st.dialog("🎭 Színész / Rendező Filmográfia", width="large")
+def show_person_dialog(person_name: str, orchestrator: Orchestrator):
+    """Megjeleníti a kiválasztott színész vagy rendező legfontosabb alkotásait."""
+    with st.spinner(f"{person_name} filmográfiájának betöltése a TMDB-ről..."):
+        person_data = orchestrator.get_person_filmography(person_name, limit=8)
+    if not person_data or not person_data.get("items"):
+        st.info(f"Nem található részletes filmográfia ehhez a névhez: {person_name}")
+        return
+
+    p_name = person_data.get("name", person_name)
+    dept = person_data.get("department", "Filmes alkotó")
+    items = person_data.get("items", [])
+    profile_url = person_data.get("profile_url")
+
+    p_col1, p_col2 = st.columns([1, 3])
+    with p_col1:
+        if profile_url:
+            st.image(profile_url, use_container_width=True)
+    with p_col2:
+        st.markdown(f"## 🎭 {p_name}")
+        st.caption(f"Fő tevékenység: **{dept}** | Legnépszerűbb filmjei és sorozatai")
+
+    st.markdown("<hr style='margin: 14px 0; border: none; border-top: 1px solid rgba(255,255,255,0.08);'/>", unsafe_allow_html=True)
+    st.markdown(f"#### 🌟 {p_name} legnépszerűbb alkotásai ({len(items)} cím):")
+
+    pr_cols = st.columns(2)
+    for pr_idx, pr_item in enumerate(items):
+        with pr_cols[pr_idx % 2]:
+            render_media_card(pr_item, orchestrator, key_prefix=f"person_{pr_idx}_{pr_item.tmdb_id}")
+
+
 def render_media_card(item: MediaItem, orchestrator: Orchestrator, key_prefix: str = "item"):
     """
     Közös, modern média kártya komponens a kereséshez, ajánlókhoz és a kívánságlistához.
@@ -258,7 +364,8 @@ def render_media_card(item: MediaItem, orchestrator: Orchestrator, key_prefix: s
             year_txt = f"({item.year})" if item.year else ""
             rating_txt = f"⭐ {item.rating}/10" if item.rating else ""
             in_plex = orchestrator.plex_service.has_media(item.title_hu, item.year)
-            plex_badge = "<span style='background: #059669; color: white; padding: 2px 6px; border-radius: 4px; font-size: 0.72rem; margin-left: 6px;'>✅ Plexben van</span>" if in_plex else ""
+            plex_url = orchestrator.settings.PLEX_SERVER_URL
+            plex_badge = f"<a href='{plex_url}' target='_blank' style='background: #059669; color: white; padding: 2px 7px; border-radius: 4px; font-size: 0.72rem; text-decoration: none; margin-left: 6px;' title='Megnyitás a Plexben'>✅ Plexben van ▶️</a>" if in_plex else ""
 
             st.markdown(f"<div class='movie-title'>{item.title_hu} {year_txt}{plex_badge}</div>", unsafe_allow_html=True)
             genres_txt = f" | <i>{', '.join(item.genres[:3])}</i>" if item.genres else ""
@@ -268,12 +375,22 @@ def render_media_card(item: MediaItem, orchestrator: Orchestrator, key_prefix: s
             )
 
             if item.director:
-                st.caption(f"🎬 **Rendező:** {item.director}")
-            if item.cast:
-                st.caption(f"🎭 **Szereplők:** {', '.join(item.cast[:3])}")
+                c_dir_txt, c_dir_btn = st.columns([3, 1.2])
+                with c_dir_txt:
+                    st.caption(f"🎬 **Rendező:** {item.director}")
+                with c_dir_btn:
+                    if st.button("🎭 Filmjei", key=f"{key_prefix}_dir_{item.tmdb_id}", help=f"{item.director} összes filmjének listázása"):
+                        show_person_dialog(item.director, orchestrator)
+            elif item.cast:
+                c_act_txt, c_act_btn = st.columns([3, 1.2])
+                with c_act_txt:
+                    st.caption(f"🎭 **Szereplők:** {', '.join(item.cast[:2])}")
+                with c_act_btn:
+                    if st.button("🎭 Filmjei", key=f"{key_prefix}_act_{item.tmdb_id}", help=f"{item.cast[0]} filmjeinek listázása"):
+                        show_person_dialog(item.cast[0], orchestrator)
 
             # Rövid leírás
-            overview_snippet = item.overview[:180] + "..." if len(item.overview) > 180 else item.overview
+            overview_snippet = item.overview[:170] + "..." if len(item.overview) > 170 else item.overview
             st.markdown(f"<div class='movie-overview'>{overview_snippet}</div>", unsafe_allow_html=True)
 
             # Élő / Gyorstárazott nCore Kiadás-összegző Jelvény
@@ -299,20 +416,44 @@ def render_media_card(item: MediaItem, orchestrator: Orchestrator, key_prefix: s
                         st.session_state[cache_key] = orchestrator.get_available_releases(detailed_item, prefer_hungarian=True)
                         st.rerun()
 
-            # 1. Gombsor: Előzetes & Infó és Kívánságlista toggle
-            b1_col1, b1_col2 = st.columns([1, 1])
+            # 1. Gombsor: Előzetes & Infó, Hasonló filmek és Kívánságlista
+            b1_col1, b1_col2, b1_col3 = st.columns([1, 1, 1])
             with b1_col1:
-                if st.button("🎬 Előzetes & Infó", key=f"{key_prefix}_details_{item.tmdb_id}", use_container_width=True):
+                if st.button("🎬 Infó", key=f"{key_prefix}_details_{item.tmdb_id}", use_container_width=True):
                     detailed_item = orchestrator.tmdb_service.get_details(item.tmdb_id, item.media_type) or item
                     show_movie_details_dialog(detailed_item, orchestrator)
             with b1_col2:
+                if st.button("✨ Hasonló", key=f"{key_prefix}_sim_{item.tmdb_id}", use_container_width=True, help="Hasonló filmek és ajánlások"):
+                    show_similar_dialog(item, orchestrator)
+            with b1_col3:
                 is_saved = orchestrator.watchlist.is_in_watchlist(item.tmdb_id)
-                star_label = "⭐ Mentve" if is_saved else "🤍 Kívánságlista"
+                star_label = "⭐ Mentve" if is_saved else "🤍 Lista"
                 if st.button(star_label, key=f"{key_prefix}_wl_{item.tmdb_id}", use_container_width=True):
                     orchestrator.watchlist.toggle(item)
                     st.rerun()
 
-            # 2. Gombsor: Automata letöltés és Kiadások választása
+            # 2. Gombsor: Mozi-Radar és Gyűjtemény (ha elérhető)
+            is_radar = orchestrator.radar.is_monitored(item.tmdb_id)
+            radar_label = "🔔 Figyelve (Radar)" if is_radar else "🔔 Mozi-Radar"
+            radar_type = "primary" if is_radar else "secondary"
+
+            if item.collection_id:
+                b2_c1, b2_c2 = st.columns([1.3, 1])
+                with b2_c1:
+                    coll_name = item.collection_name or "Gyűjtemény"
+                    coll_btn_txt = f"📦 {coll_name[:18]}..." if len(coll_name) > 18 else f"📦 {coll_name}"
+                    if st.button(coll_btn_txt, key=f"{key_prefix}_coll_{item.tmdb_id}", use_container_width=True, help="A teljes franchise részeinek megtekintése"):
+                        show_collection_dialog(item.collection_id, orchestrator)
+                with b2_c2:
+                    if st.button(radar_label, key=f"{key_prefix}_radar_{item.tmdb_id}", type=radar_type, use_container_width=True, help="Automatikus letöltés jó minőségben megjelenéskor"):
+                        orchestrator.radar.toggle(item)
+                        st.rerun()
+            else:
+                if st.button(radar_label, key=f"{key_prefix}_radar_{item.tmdb_id}", type=radar_type, use_container_width=True, help="Automatikus letöltés jó minőségben megjelenéskor"):
+                    orchestrator.radar.toggle(item)
+                    st.rerun()
+
+            # 3. Gombsor: Letöltés és Kiadások választása
             b2_col1, b2_col2 = st.columns([1, 1])
             btn_auto_key = f"dl_auto_{key_prefix}_{item.tmdb_id}"
             toggle_key = f"show_releases_{key_prefix}_{item.tmdb_id}"
@@ -497,9 +638,120 @@ def render_media_card(item: MediaItem, orchestrator: Orchestrator, key_prefix: s
         st.markdown("</div>", unsafe_allow_html=True)
 
 
+def fetch_browse_items(
+    orchestrator: Orchestrator,
+    category: str,
+    media_type: MediaType,
+    sort_by: str,
+    year_min: Optional[int],
+    year_max: Optional[int],
+    query: Optional[str],
+    page: int,
+    limit: int = 12,
+    watch_provider: Optional[str] = None,
+) -> List[MediaItem]:
+    """Segédfüggvény a különböző kategóriák és szűrők dinamikus TMDB lekéréséhez."""
+    clean_q = query.strip() if query and query.strip() else None
+
+    # Ha kifejezetten streaming szolgáltatóra szűrünk (Netflix, Max, Disney+, stb.)
+    if watch_provider:
+        return orchestrator.discover_media(
+            media_type=media_type,
+            sort_by=sort_by,
+            year_min=year_min,
+            year_max=year_max,
+            page=page,
+            limit=limit,
+            query=clean_q,
+            with_watch_providers=watch_provider,
+        )
+
+    if category == "⚔️ Háborús & Történelmi":
+        return orchestrator.get_war_media(
+            media_type=media_type,
+            page=page,
+            limit=limit,
+            sort_by=sort_by,
+            year_min=year_min,
+            year_max=year_max,
+            query=clean_q,
+        )
+    elif category == "🔥 Népszerű Filmek":
+        if clean_q or year_min or year_max or sort_by != "popularity.desc":
+            return orchestrator.discover_media(
+                media_type=MediaType.MOVIE,
+                sort_by=sort_by,
+                year_min=year_min,
+                year_max=year_max,
+                page=page,
+                limit=limit,
+                query=clean_q,
+            )
+        return orchestrator.get_popular_movies(page=page, limit=limit)
+    elif category == "📺 Népszerű Sorozatok":
+        if clean_q or year_min or year_max or sort_by != "popularity.desc":
+            return orchestrator.discover_media(
+                media_type=MediaType.TV,
+                sort_by=sort_by,
+                year_min=year_min,
+                year_max=year_max,
+                page=page,
+                limit=limit,
+                query=clean_q,
+            )
+        return orchestrator.get_popular_series(page=page, limit=limit)
+    elif category == "⭐ Kritikuskedvencek":
+        if clean_q or year_min or year_max:
+            return orchestrator.discover_media(
+                media_type=media_type,
+                sort_by="vote_average.desc",
+                year_min=year_min,
+                year_max=year_max,
+                page=page,
+                limit=limit,
+                query=clean_q,
+            )
+        return orchestrator.get_top_rated(media_type=media_type, page=page, limit=limit)
+    elif category == "💥 Akció & Kaland":
+        genre_id = 28 if media_type == MediaType.MOVIE else 10759
+        return orchestrator.get_by_genre(
+            genre_id, media_type, page=page, limit=limit, sort_by=sort_by, year_min=year_min, year_max=year_max, query=clean_q
+        )
+    elif category == "😂 Vígjáték":
+        return orchestrator.get_by_genre(
+            35, media_type, page=page, limit=limit, sort_by=sort_by, year_min=year_min, year_max=year_max, query=clean_q
+        )
+    elif category == "🚀 Sci-Fi & Fantasy":
+        genre_id = 878 if media_type == MediaType.MOVIE else 10765
+        return orchestrator.get_by_genre(
+            genre_id, media_type, page=page, limit=limit, sort_by=sort_by, year_min=year_min, year_max=year_max, query=clean_q
+        )
+    elif category == "😱 Horror & Thriller":
+        genre_id = 27 if media_type == MediaType.MOVIE else 9648
+        return orchestrator.get_by_genre(
+            genre_id, media_type, page=page, limit=limit, sort_by=sort_by, year_min=year_min, year_max=year_max, query=clean_q
+        )
+    elif category == "👶 Családi & Animáció":
+        return orchestrator.get_by_genre(
+            16, media_type, page=page, limit=limit, sort_by=sort_by, year_min=year_min, year_max=year_max, query=clean_q
+        )
+    elif category == "🕵️ Krimi & Rejtély":
+        return orchestrator.get_by_genre(
+            80, media_type, page=page, limit=limit, sort_by=sort_by, year_min=year_min, year_max=year_max, query=clean_q
+        )
+    elif category == "🎭 Dráma":
+        return orchestrator.get_by_genre(
+            18, media_type, page=page, limit=limit, sort_by=sort_by, year_min=year_min, year_max=year_max, query=clean_q
+        )
+    return []
+
+
 def main():
     settings = get_settings()
     orchestrator = get_orchestrator()
+    if not hasattr(orchestrator, "radar") or orchestrator.radar is None:
+        from src.core.movie_radar import MovieRadarManager
+        orchestrator.radar = MovieRadarManager()
     local_ip = get_local_ip()
 
     # Fejléc
@@ -531,8 +783,10 @@ def main():
 
     # Fő fülek
     wl_count = len(orchestrator.watchlist.get_all())
-    tab_search, tab_watchlist, tab_downloads, tab_status, tab_debug = st.tabs([
+    radar_count = len(orchestrator.radar.get_monitoring())
+    tab_search, tab_radar, tab_watchlist, tab_downloads, tab_status, tab_debug = st.tabs([
         "🔍 Film & Sorozat Keresés",
+        f"🔔 Mozi-Radar ({radar_count})",
         f"⭐ Kívánságlista ({wl_count})",
         "📥 Letöltések Állapota",
         "⚙️ Rendszer & Beállítások",
@@ -581,56 +835,345 @@ def main():
 
         else:
             # ==============================================================
-            # KEZDŐLAPI AJÁNLÓK: MIT NÉZZÜNK MA ESTE?
+            # KEZDŐLAPI AJÁNLÓK: VÉGTELEN MÉDIA FELFEDEZŐ & NCORE GYORSKERESŐ
             # ==============================================================
             st.markdown("<hr style='margin: 16px 0; border: none; border-top: 1px solid rgba(255,255,255,0.08);'/>", unsafe_allow_html=True)
-            st.markdown("### 🌟 Mit nézzünk ma este? - Népszerű és Felkapott Ajánlók")
-            st.caption("Kattints egy kategóriára az aktuális toplisták és a legnépszerűbb magyar kiadások azonnali böngészéséhez:")
+            
+            c_head_left, c_head_right = st.columns([4, 2])
+            with c_head_left:
+                st.markdown("### 🌟 Mit nézzünk ma este? - Végtelen Média Felfedező")
+                st.caption("Lapozz kedvedre a kategóriák, platformok és korszakok között, azonnali nCore elérhetőséggel és Mozi-Radarral!")
 
+            # 1. Kategória Választó Sáv (Pills)
             rec_options = [
+                "⚔️ Háborús & Történelmi",
                 "🔥 Népszerű Filmek",
                 "📺 Népszerű Sorozatok",
                 "⭐ Kritikuskedvencek",
-                "💥 Akció",
+                "💥 Akció & Kaland",
                 "😂 Vígjáték",
-                "🚀 Sci-Fi",
-                "👶 Családi / Animáció",
-                "🕵️ Krimi",
+                "🚀 Sci-Fi & Fantasy",
+                "😱 Horror & Thriller",
+                "👶 Családi & Animáció",
+                "🕵️ Krimi & Rejtély",
+                "🎭 Dráma",
             ]
-            rec_choice = st.radio(
+            rec_choice = st.pills(
                 "Kategóriák",
                 options=rec_options,
-                horizontal=True,
-                label_visibility="collapsed",
-                key="home_rec_radio",
+                default="⚔️ Háborús & Történelmi",
+                key="home_rec_pills",
+            )
+            if not rec_choice:
+                rec_choice = "⚔️ Háborús & Történelmi"
+
+            # 2. Beépített Kereső & Szűrősáv a Kategórián Belül
+            with st.container():
+                st.markdown(
+                    """
+                    <div style="background: rgba(15, 23, 42, 0.45); border: 1px solid rgba(255,255,255,0.06); 
+                                border-radius: 10px; padding: 12px 14px; margin: 10px 0 14px 0;">
+                    """,
+                    unsafe_allow_html=True,
+                )
+                f_col1, f_col2, f_col3, f_col4, f_col5 = st.columns([2.5, 1.8, 1.6, 1.8, 1.3])
+                with f_col1:
+                    sub_q = st.text_input(
+                        "🔍 Keresés a kategórián belül",
+                        placeholder="Pl. 'Normandia', 'tengeralattjáró', 'Dunkirk'...",
+                        key="browse_sub_q",
+                    )
+                with f_col2:
+                    sort_mode = st.selectbox(
+                        "📊 Rendezési elv",
+                        options=["🔥 Legnépszerűbb", "⭐ Legjobbra értékelt", "🆕 Legújabb kiadás"],
+                        key="browse_sort_mode",
+                    )
+                with f_col3:
+                    era_mode = st.selectbox(
+                        "📅 Korszak / Évszám",
+                        options=["Összes évjárat", "🌟 2020 utániak", "🎬 2010 – 2020", "📼 2000 – 2010", "🎞️ 2000 előttiek"],
+                        key="browse_era_mode",
+                    )
+                with f_col4:
+                    prov_mode = st.selectbox(
+                        "📺 Streaming Platform",
+                        options=["Összes platform", "🔴 Netflix", "🟣 Max (HBO)", "🔵 Disney+", "🍏 Apple TV+", "🟡 SkyShowtime", "📦 Prime Video"],
+                        key="browse_prov_mode",
+                    )
+                with f_col5:
+                    if rec_choice == "📺 Népszerű Sorozatok":
+                        default_t_idx = 1
+                    elif rec_choice == "🔥 Népszerű Filmek":
+                        default_t_idx = 0
+                    else:
+                        default_t_idx = 0
+                    type_choice = st.selectbox(
+                        "🎬 Formátum",
+                        options=["🎬 Filmek", "📺 Sorozatok"],
+                        index=default_t_idx,
+                        key="browse_type_choice",
+                    )
+                st.markdown("</div>", unsafe_allow_html=True)
+
+            # Szűrőparaméterek feloldása
+            target_media_type = (
+                MediaType.TV
+                if ("Sorozat" in type_choice or rec_choice == "📺 Népszerű Sorozatok")
+                else MediaType.MOVIE
             )
 
-            cache_rec_key = f"rec_data_{rec_choice}"
-            if cache_rec_key not in st.session_state:
-                with st.spinner("Ajánlások betöltése a TMDB-ről..."):
-                    if rec_choice == "🔥 Népszerű Filmek":
-                        st.session_state[cache_rec_key] = orchestrator.get_popular_movies(8)
-                    elif rec_choice == "📺 Népszerű Sorozatok":
-                        st.session_state[cache_rec_key] = orchestrator.get_popular_series(8)
-                    elif rec_choice == "⭐ Kritikuskedvencek":
-                        st.session_state[cache_rec_key] = orchestrator.get_top_rated(MediaType.MOVIE, 8)
-                    elif rec_choice == "💥 Akció":
-                        st.session_state[cache_rec_key] = orchestrator.get_by_genre(28, MediaType.MOVIE, 8)
-                    elif rec_choice == "😂 Vígjáték":
-                        st.session_state[cache_rec_key] = orchestrator.get_by_genre(35, MediaType.MOVIE, 8)
-                    elif rec_choice == "🚀 Sci-Fi":
-                        st.session_state[cache_rec_key] = orchestrator.get_by_genre(878, MediaType.MOVIE, 8)
-                    elif rec_choice == "👶 Családi / Animáció":
-                        st.session_state[cache_rec_key] = orchestrator.get_by_genre(16, MediaType.MOVIE, 8)
-                    elif rec_choice == "🕵️ Krimi":
-                        st.session_state[cache_rec_key] = orchestrator.get_by_genre(80, MediaType.MOVIE, 8)
+            sort_map = {
+                "🔥 Legnépszerűbb": "popularity.desc",
+                "⭐ Legjobbra értékelt": "vote_average.desc",
+                "🆕 Legújabb kiadás": (
+                    "primary_release_date.desc"
+                    if target_media_type == MediaType.MOVIE
+                    else "first_air_date.desc"
+                ),
+            }
+            sort_by = sort_map.get(sort_mode, "popularity.desc")
 
-            rec_items = st.session_state.get(cache_rec_key, [])
-            if rec_items:
+            year_min, year_max = None, None
+            if era_mode == "🌟 2020 utániak":
+                year_min = 2020
+            elif era_mode == "🎬 2010 – 2020":
+                year_min, year_max = 2010, 2020
+            elif era_mode == "📼 2000 – 2010":
+                year_min, year_max = 2000, 2009
+            elif era_mode == "🎞️ 2000 előttiek":
+                year_max = 1999
+
+            prov_map = {
+                "🔴 Netflix": "8",
+                "🟣 Max (HBO)": "1899",
+                "🔵 Disney+": "337",
+                "🍏 Apple TV+": "350",
+                "🟡 SkyShowtime": "1773",
+                "📦 Prime Video": "119",
+            }
+            watch_provider_id = prov_map.get(prov_mode)
+
+            # Filter Hash figyelése - ha megváltozik a szűrő, újraindul az 1. oldalról
+            clean_sub_q = sub_q.strip() if sub_q else ""
+            filter_state_hash = f"{rec_choice}|{clean_sub_q}|{sort_by}|{year_min}|{year_max}|{watch_provider_id}|{target_media_type.value}"
+
+            if st.session_state.get("last_filter_state_hash") != filter_state_hash:
+                st.session_state["last_filter_state_hash"] = filter_state_hash
+                st.session_state["browse_page"] = 1
+                st.session_state["browse_accumulated_items"] = []
+
+            current_page = st.session_state.get("browse_page", 1)
+            accumulated_items = st.session_state.get("browse_accumulated_items", [])
+
+            if not accumulated_items:
+                with st.spinner("Tartalmak betöltése a TMDB-ről..."):
+                    accumulated_items = fetch_browse_items(
+                        orchestrator,
+                        category=rec_choice,
+                        media_type=target_media_type,
+                        sort_by=sort_by,
+                        year_min=year_min,
+                        year_max=year_max,
+                        query=clean_sub_q,
+                        page=current_page,
+                        limit=12,
+                        watch_provider=watch_provider_id,
+                    )
+                    st.session_state["browse_accumulated_items"] = accumulated_items
+
+            # 3. nCore & Plex Elérhetőség-ellenőrző Sáv
+            chk_col1, chk_col2, chk_col3, chk_col4 = st.columns([3.0, 2.2, 2.6, 2.0])
+
+            with chk_col1:
+                btn_chk_text = f"⚡ Oldalon lévők ({len(accumulated_items)} db) nCore ellenőrzése"
+                if st.button(btn_chk_text, key="btn_check_all_ncore", use_container_width=True, type="secondary"):
+                    items_to_check = [
+                        it for it in accumulated_items
+                        if f"cached_releases_{it.tmdb_id}" not in st.session_state
+                    ]
+                    if not items_to_check:
+                        st.info("Az oldalon lévő összes film már ellenőrizve van!")
+                    else:
+                        with st.status(f"⚡ Gyorsított nCore ellenőrzés ({len(items_to_check)} db cím, 3 szálon)...", expanded=True) as status_box:
+                            prog = st.progress(0.0)
+
+                            def _on_batch_progress(done: int, total: int, it: Any, rels: List[Any]):
+                                prog.progress(done / total)
+                                stat_str = f"✅ {len(rels)} kiadás" if rels else "⏳ nincs még fent"
+                                status_box.write(f"• **{it.title_hu}** ({it.year or ''}): {stat_str}")
+
+                            batch_res = orchestrator.check_releases_batch(
+                                items_to_check, max_workers=3, callback=_on_batch_progress
+                            )
+                            for tmdb_id, rels in batch_res.items():
+                                st.session_state[f"cached_releases_{tmdb_id}"] = rels
+
+                            status_box.update(
+                                label="✅ nCore kiadások villámgyorsan lekérve (Párhuzamos 3-szálas motorral)!",
+                                state="complete",
+                                expanded=False,
+                            )
+                        st.rerun()
+
+            with chk_col2:
+                show_only_available = st.toggle("🎯 Csak nCore-on elérhetők", key="toggle_browse_only_available")
+
+            with chk_col3:
+                hide_in_plex = st.toggle("🙈 Hiányzók (nincs Plexben)", key="toggle_browse_hide_in_plex")
+
+            with chk_col4:
+                checked_cnt = sum(1 for it in accumulated_items if f"cached_releases_{it.tmdb_id}" in st.session_state)
+                avail_cnt = sum(1 for it in accumulated_items if len(st.session_state.get(f"cached_releases_{it.tmdb_id}", [])) > 0)
+                if checked_cnt > 0:
+                    st.caption(f"📊 **{checked_cnt}/{len(accumulated_items)}** ellenőrizve | **{avail_cnt}** elérhető")
+                else:
+                    st.caption("ℹ️ Kattints az ellenőrzésre!")
+
+            # 4. Kártyák Megjelenítése és Szűrése
+            display_items = accumulated_items
+            if hide_in_plex:
+                display_items = [
+                    it for it in display_items
+                    if not orchestrator.plex_service.has_media(it.title_hu, it.year)
+                ]
+
+            if show_only_available:
+                display_items = [
+                    it for it in display_items
+                    if f"cached_releases_{it.tmdb_id}" in st.session_state
+                    and len(st.session_state[f"cached_releases_{it.tmdb_id}"]) > 0
+                ]
+                if not display_items:
+                    if checked_cnt == 0:
+                        st.info(
+                            "💡 Az oldalon lévő filmek még nincsenek ellenőrizve az nCore-on. "
+                            "Kattints a fenti **'⚡ Oldalon lévők nCore ellenőrzése'** gombra az elérhető kiadások felderítéséhez!"
+                        )
+                    else:
+                        st.warning("A jelenleg betöltött elemek közül még egyik sincs fent az nCore-on. Lapozz tovább vagy tölts be még 12 filmet az alábbi zöld gombbal!")
+
+            if display_items:
                 r_cols = st.columns(2)
-                for r_idx, r_item in enumerate(rec_items):
+                for r_idx, r_item in enumerate(display_items):
                     with r_cols[r_idx % 2]:
-                        render_media_card(r_item, orchestrator, key_prefix=f"rec_{r_idx}")
+                        render_media_card(r_item, orchestrator, key_prefix=f"browse_{r_idx}_{r_item.tmdb_id}")
+
+            # 5. Lapozó & Végtelen Betöltő (Pagináció & Load More)
+            st.markdown("<hr style='margin: 20px 0 12px 0; border: none; border-top: 1px solid rgba(255,255,255,0.08);'/>", unsafe_allow_html=True)
+            nav_col1, nav_col2, nav_col3 = st.columns([2, 4, 2])
+
+            with nav_col1:
+                if current_page > 1:
+                    if st.button("◀ Előző oldal (12 film)", key="btn_browse_prev", use_container_width=True):
+                        prev_p = max(1, current_page - 1)
+                        st.session_state["browse_page"] = prev_p
+                        st.session_state["browse_accumulated_items"] = fetch_browse_items(
+                            orchestrator,
+                            category=rec_choice,
+                            media_type=target_media_type,
+                            sort_by=sort_by,
+                            year_min=year_min,
+                            year_max=year_max,
+                            query=clean_sub_q,
+                            page=prev_p,
+                            limit=12,
+                            watch_provider=watch_provider_id,
+                        )
+                        st.rerun()
+
+            with nav_col2:
+                btn_load_more_text = f"➕ További 12 film betöltése ({len(accumulated_items)} eddig betöltve • {current_page}. oldal)"
+                if st.button(btn_load_more_text, type="primary", use_container_width=True, key="btn_browse_load_more"):
+                    next_p = current_page + 1
+                    with st.spinner("Következő oldal betöltése a TMDB-ről..."):
+                        more_items = fetch_browse_items(
+                            orchestrator,
+                            category=rec_choice,
+                            media_type=target_media_type,
+                            sort_by=sort_by,
+                            year_min=year_min,
+                            year_max=year_max,
+                            query=clean_sub_q,
+                            page=next_p,
+                            limit=12,
+                            watch_provider=watch_provider_id,
+                        )
+                        existing_ids = {x.tmdb_id for x in accumulated_items}
+                        for m in more_items:
+                            if m.tmdb_id not in existing_ids:
+                                accumulated_items.append(m)
+                                existing_ids.add(m.tmdb_id)
+                        st.session_state["browse_page"] = next_p
+                        st.session_state["browse_accumulated_items"] = accumulated_items
+                    st.rerun()
+
+            with nav_col3:
+                if st.button("Következő oldal ▶", key="btn_browse_next", use_container_width=True):
+                    next_p = current_page + 1
+                    st.session_state["browse_page"] = next_p
+                    st.session_state["browse_accumulated_items"] = fetch_browse_items(
+                        orchestrator,
+                        category=rec_choice,
+                        media_type=target_media_type,
+                        sort_by=sort_by,
+                        year_min=year_min,
+                        year_max=year_max,
+                        query=clean_sub_q,
+                        page=next_p,
+                        limit=12,
+                        watch_provider=watch_provider_id,
+                    )
+                    st.rerun()
+
+    # ==============================================================
+    # 2. FÜL: MOZI-RADAR & AUTOMATA LETÖLTŐ
+    # ==============================================================
+    with tab_radar:
+        st.write("")
+        r_items = orchestrator.radar.get_all()
+        r_monitoring = [x for x in r_items if x.get("status") == "monitoring"]
+        r_downloaded = [x for x in r_items if x.get("status") == "downloaded"]
+
+        r_head, r_check, r_clear = st.columns([4, 2, 1.2])
+        with r_head:
+            st.markdown(f"### 🔔 Mozi-Radar & Automata Letöltő ({len(r_monitoring)} figyelve)")
+            st.caption("A háttérben futó figyelőnk automatikusan letölti és Plexbe rendezi a filmeket, amint kijön a digitális, jó minőségű (nem mozis CAM) szinkronos kiadás!")
+        with r_check:
+            if r_monitoring and st.button("⚡ Figyeltek ellenőrzése most", use_container_width=True, key="btn_check_radar_now"):
+                with st.spinner("Mozi-Radar tételek felderítése az nCore-on..."):
+                    hits = orchestrator.radar.check_and_trigger_downloads(orchestrator)
+                    if hits:
+                        st.success(f"🎉 {len(hits)} db új film megjelent digitálisan és elindult a letöltése!")
+                        st.balloons()
+                    else:
+                        st.info("Egyelőre még nincs új digitális kiadás a figyelt filmekből.")
+                st.rerun()
+        with r_clear:
+            if r_items and st.button("🗑️ Ürítés", use_container_width=True, key="btn_clear_radar"):
+                for it in r_items:
+                    orchestrator.radar.remove(it["tmdb_id"])
+                st.rerun()
+
+        if not r_items:
+            st.info("💡 A Mozi-Radaron jelenleg nincs figyelt film. Böngészés közben kattints a filmek kártyáján a **🔔 Mozi-Radar** gombra a felvételhez!")
+        else:
+            if r_monitoring:
+                st.markdown("#### ⏳ Aktívan Figyelt Filmek (Várakozás digitális kiadásra):")
+                r_m_cols = st.columns(2)
+                for m_idx, m_entry in enumerate(r_monitoring):
+                    with r_m_cols[m_idx % 2]:
+                        m_obj = MediaItem(**m_entry["media_item"])
+                        render_media_card(m_obj, orchestrator, key_prefix=f"radar_mon_{m_idx}")
+
+            if r_downloaded:
+                st.markdown("<hr style='margin: 16px 0; border: none; border-top: 1px solid rgba(255,255,255,0.08);'/>", unsafe_allow_html=True)
+                st.markdown(f"#### ✅ Már Megjelent és Letöltött Filmek ({len(r_downloaded)} db):")
+                r_d_cols = st.columns(2)
+                for d_idx, d_entry in enumerate(r_downloaded):
+                    with r_d_cols[d_idx % 2]:
+                        d_obj = MediaItem(**d_entry["media_item"])
+                        render_media_card(d_obj, orchestrator, key_prefix=f"radar_done_{d_idx}")
 
     # ==============================================================
     # 2. FÜL: KÍVÁNSÁGLISTA (Később megnézem)

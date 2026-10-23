@@ -4,7 +4,9 @@ from typing import Any, Dict, List, Optional
 from loguru import logger
 
 from src.config.settings import get_settings
+from src.core.atomic_storage import atomic_save_json, load_json_with_recovery
 from src.core.autostart import AutostartManager
+from src.core.movie_radar import MovieRadarManager
 from src.core.organizer import MediaOrganizer
 from src.core.watchlist import WatchlistManager
 from src.models.media import MediaItem, MediaType, TorrentRelease
@@ -27,7 +29,7 @@ class Orchestrator:
     5. Befejezett letöltések átrendezése a Plex mappába (Hardlinkkel az azonnali lejátszáshoz).
     6. Plex szerver automatikus könyvtárfrissítése.
     7. nCore Hit & Run (48h / 1.0 arány) felügyelet.
-    8. Kívánságlista és automatikus Windows indítás kezelése.
+    8. Kívánságlista, Mozi-Radar és automatikus Windows indítás kezelése.
     """
 
     STATE_FILE = Path(__file__).resolve().parent.parent.parent / "data" / "tasks_state.json"
@@ -41,6 +43,7 @@ class Orchestrator:
         self.plex_service = PlexService()
         self.organizer = MediaOrganizer()
         self.watchlist = WatchlistManager()
+        self._radar = MovieRadarManager()
         self.autostart = AutostartManager()
 
         # Mappák előkészítése biztonságosan (ne omoljon össze ha a meghajtó még nincs csatlakoztatva)
@@ -56,6 +59,17 @@ class Orchestrator:
                 logger.warning(f"Figyelem: A mappa ({dir_path}) nem érhető el közvetlenül: {e}")
 
         self._tasks: Dict[str, dict] = self._load_state()
+
+    @property
+    def radar(self) -> MovieRadarManager:
+        """Biztosítja a Mozi-Radar elérését még régebbi memóriabeli cache-elt példányok esetén is."""
+        if not hasattr(self, "_radar") or self._radar is None:
+            self._radar = MovieRadarManager()
+        return self._radar
+
+    @radar.setter
+    def radar(self, value: MovieRadarManager):
+        self._radar = value
 
     def search_media(self, query: str) -> List[MediaItem]:
         """
@@ -417,43 +431,182 @@ class Orchestrator:
         return False
 
     def _save_state(self):
-        try:
-            self.STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.STATE_FILE, "w", encoding="utf-8") as f:
-                json.dump(self._tasks, f, ensure_ascii=False, indent=2, default=str)
-        except Exception as e:
-            logger.error(f"Hiba az állapot mentésekor: {str(e)}")
+        atomic_save_json(self.STATE_FILE, self._tasks, create_backup=True)
 
     def _load_state(self) -> Dict[str, dict]:
-        if not self.STATE_FILE.exists():
-            return {}
-        try:
-            content = self.STATE_FILE.read_text(encoding="utf-8").strip()
-            if not content:
-                return {}
-            return json.loads(content)
-        except Exception as e:
-            logger.warning(f"Nem sikerült az állapot betöltése, üres állapot használata: {str(e)}")
-            return {}
+        return load_json_with_recovery(self.STATE_FILE, default_factory=dict)
 
     # ==============================================================
-    # KEZDŐLAPI AJÁNLÓK (TRENDING, NÉPSZERŰ, MŰFAJOK)
+    # KEZDŐLAPI AJÁNLÓK (TRENDING, NÉPSZERŰ, HÁBORÚS, MŰFAJOK, LAPOZÁS)
     # ==============================================================
-    def get_popular_movies(self, limit: int = 8) -> List[MediaItem]:
-        """Lekéri a népszerű filmeket Magyarországon."""
-        return self.tmdb_service.get_popular_movies(limit=limit)
+    def get_popular_movies(self, page: int = 1, limit: int = 12) -> List[MediaItem]:
+        """Lekéri a népszerű filmeket Magyarországon lapozással."""
+        return self.tmdb_service.get_popular_movies(page=page, limit=limit)
 
-    def get_popular_series(self, limit: int = 8) -> List[MediaItem]:
-        """Lekéri a legnépszerűbb sorozatokat."""
-        return self.tmdb_service.get_popular_series(limit=limit)
+    def get_popular_series(self, page: int = 1, limit: int = 12) -> List[MediaItem]:
+        """Lekéri a legnépszerűbb sorozatokat lapozással."""
+        return self.tmdb_service.get_popular_series(page=page, limit=limit)
 
-    def get_top_rated(self, media_type: MediaType = MediaType.MOVIE, limit: int = 8) -> List[MediaItem]:
-        """Lekéri a legmagasabbra értékelt filmeket vagy sorozatokat."""
-        return self.tmdb_service.get_top_rated(media_type=media_type, limit=limit)
+    def get_top_rated(
+        self, media_type: MediaType = MediaType.MOVIE, page: int = 1, limit: int = 12
+    ) -> List[MediaItem]:
+        """Lekéri a legmagasabbra értékelt filmeket vagy sorozatokat lapozással."""
+        return self.tmdb_service.get_top_rated(media_type=media_type, page=page, limit=limit)
 
-    def get_by_genre(self, genre_id: int, media_type: MediaType = MediaType.MOVIE, limit: int = 8) -> List[MediaItem]:
-        """Lekéri az adott műfaj népszerű tartalmait."""
-        return self.tmdb_service.get_by_genre(genre_id=genre_id, media_type=media_type, limit=limit)
+    def get_war_media(
+        self,
+        media_type: MediaType = MediaType.MOVIE,
+        page: int = 1,
+        limit: int = 12,
+        sort_by: str = "popularity.desc",
+        year_min: Optional[int] = None,
+        year_max: Optional[int] = None,
+        query: Optional[str] = None,
+    ) -> List[MediaItem]:
+        """Lekéri a háborús filmeket és sorozatokat szűrőkkel és lapozással."""
+        return self.tmdb_service.get_war_media(
+            media_type=media_type,
+            page=page,
+            limit=limit,
+            sort_by=sort_by,
+            year_min=year_min,
+            year_max=year_max,
+            query=query,
+        )
+
+    def get_by_genre(
+        self,
+        genre_id: int,
+        media_type: MediaType = MediaType.MOVIE,
+        page: int = 1,
+        limit: int = 12,
+        sort_by: str = "popularity.desc",
+        year_min: Optional[int] = None,
+        year_max: Optional[int] = None,
+        query: Optional[str] = None,
+    ) -> List[MediaItem]:
+        """Lekéri az adott műfaj tartalmait szűrőkkel és lapozással."""
+        return self.tmdb_service.get_by_genre(
+            genre_id=genre_id,
+            media_type=media_type,
+            page=page,
+            limit=limit,
+            sort_by=sort_by,
+            year_min=year_min,
+            year_max=year_max,
+            query=query,
+        )
+
+    def discover_media(
+        self,
+        media_type: MediaType = MediaType.MOVIE,
+        genre_ids: Optional[List[int]] = None,
+        sort_by: str = "popularity.desc",
+        year_min: Optional[int] = None,
+        year_max: Optional[int] = None,
+        page: int = 1,
+        limit: int = 12,
+        query: Optional[str] = None,
+        with_watch_providers: Optional[str] = None,
+    ) -> List[MediaItem]:
+        """Univerzális média felfedező és szűrő motor a TMDB-n."""
+        return self.tmdb_service.discover_media(
+            media_type=media_type,
+            genre_ids=genre_ids,
+            sort_by=sort_by,
+            year_min=year_min,
+            year_max=year_max,
+            page=page,
+            limit=limit,
+            query=query,
+            with_watch_providers=with_watch_providers,
+        )
+
+    def get_similar_media(self, item: MediaItem, limit: int = 8) -> List[MediaItem]:
+        """Hasonló filmek vagy sorozatok lekérése a TMDB ajánló motorjából."""
+        return self.tmdb_service.get_similar(item.tmdb_id, item.media_type, limit=limit)
+
+    def get_collection_details(self, collection_id: int) -> Dict[str, Any]:
+        """Egy teljes filmgyűjtemény (franchise) részeinek és adatainak lekérése."""
+        return self.tmdb_service.get_collection_details(collection_id)
+
+    def get_person_filmography(self, person_name: str, limit: int = 12) -> Dict[str, Any]:
+        """Egy színész vagy rendező adatlapjának és legfontosabb filmjeinek lekérése."""
+        return self.tmdb_service.get_person_credits(person_name, limit=limit)
+
+    def download_collection_all(self, collection_id: int) -> Dict[str, Any]:
+        """
+        Elindítja egy film-gyűjtemény (pl. Harry Potter 1-8) összes részének letöltését sorban!
+        """
+        coll = self.get_collection_details(collection_id)
+        parts = coll.get("parts", [])
+        if not parts:
+            return {"success": False, "message": "A gyűjtemény nem tartalmaz elérhető filmeket."}
+
+        started_count = 0
+        failed_count = 0
+        for part in parts:
+            res = self.start_download_flow(part, prefer_hungarian=True)
+            if res.get("success"):
+                started_count += 1
+            else:
+                failed_count += 1
+
+        msg = f"Gyűjtemény letöltés: {started_count} db film elindítva a qBittorrentben!"
+        if failed_count > 0:
+            msg += f" ({failed_count} db filmet még nem találtunk nCore-on)."
+        return {"success": started_count > 0, "message": msg, "started": started_count}
+
+    def check_release_availability(self, item: MediaItem) -> List[TorrentRelease]:
+        """
+        Egy adott MediaItem nCore elérhetőségének ellenőrzése (IMDb kód vagy cím alapján).
+        Gondoskodik az IMDb kód előzetes feloldásáról a részletes TMDB adatlapon keresztül.
+        """
+        detailed = item
+        if not item.imdb_id:
+            detailed = self.tmdb_service.get_details(item.tmdb_id, item.media_type) or item
+        return self.get_available_releases(detailed, prefer_hungarian=True)
+
+    def check_releases_batch(
+        self,
+        items: List[MediaItem],
+        max_workers: int = 3,
+        callback: Optional[Any] = None,
+    ) -> Dict[int, List[TorrentRelease]]:
+        """
+        Több MediaItem nCore elérhetőségének párhuzamos lekérdezése ThreadPoolExecutor segítségével.
+        3 szállal fut, így 3-4x gyorsabb, mint az egymás utáni lekérdezés, miközben biztonságos az nCore szerver felé.
+        """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        results: Dict[int, List[TorrentRelease]] = {}
+        if not items:
+            return results
+
+        def _worker(it: MediaItem):
+            try:
+                rels = self.check_release_availability(it)
+                return it.tmdb_id, rels, it
+            except Exception as e:
+                logger.debug(f"Hiba a tétel nCore ellenőrzésekor ({it.title_hu}): {e}")
+                return it.tmdb_id, [], it
+
+        completed_count = 0
+        total_count = len(items)
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(_worker, it) for it in items]
+            for future in as_completed(futures):
+                tmdb_id, rels, it = future.result()
+                results[tmdb_id] = rels
+                completed_count += 1
+                if callback:
+                    try:
+                        callback(completed_count, total_count, it, rels)
+                    except Exception:
+                        pass
+
+        return results
 
     # ==============================================================
     # LEMEZTERÜLET ÉS HNR STATISZTIKÁK

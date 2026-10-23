@@ -70,6 +70,30 @@ class BackgroundWorker:
                     tooltip = summary.get("tooltip", "Ncore Letöltő")
                     self.tray_service.update_tooltip(tooltip)
 
+                # 4. Mozi-Radar automata ellenőrzés (~10 percenként, 40 ciklusonként)
+                self._radar_counter = getattr(self, "_radar_counter", 0) + 1
+                if self._radar_counter >= 40:
+                    self._radar_counter = 0
+                    if hasattr(self.orchestrator, "radar"):
+                        radar_hits = self.orchestrator.radar.check_and_trigger_downloads(self.orchestrator)
+                        for hit in radar_hits:
+                            title = hit["title"]
+                            rel = hit["release"]
+                            msg = f"'{title}' megjelent digitálisan! Letöltés elindult: {rel.title}"
+                            logger.info(f"Mozi-Radar automatikus letöltés indult: {msg}")
+                            if self.tray_service:
+                                self.tray_service.notify(
+                                    title="🔔 Mozi-Radar: Új megjelenés!",
+                                    message=msg,
+                                )
+
+                # 5. Ideiglenes fájlok automatikus karbantartása (~2 óránként)
+                self._cleanup_counter = getattr(self, "_cleanup_counter", 0) + 1
+                if self._cleanup_counter >= 480:
+                    self._cleanup_counter = 0
+                    if hasattr(self.orchestrator, "organizer"):
+                        self.orchestrator.organizer.cleanup_old_temp_files(days=7)
+
             except Exception as e:
                 logger.error(f"Hiba a háttérfolyamat ciklusában: {e}")
 

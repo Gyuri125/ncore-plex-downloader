@@ -26,8 +26,10 @@ class SubtitleService:
     def __init__(self):
         settings = get_settings()
         self.os_api_key = settings.OPENSUBTITLES_API_KEY
+        transport = httpx.HTTPTransport(retries=3)
         self.client = httpx.Client(
-            timeout=15.0,
+            transport=transport,
+            timeout=httpx.Timeout(15.0, connect=6.0),
             headers={
                 "User-Agent": (
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "

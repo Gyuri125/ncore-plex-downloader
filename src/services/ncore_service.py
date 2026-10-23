@@ -38,8 +38,11 @@ class NcoreService:
         self.password = password or settings.NCORE_PASSWORD
         self.passkey = passkey or settings.NCORE_PASSKEY
 
+        # Hálózati hibatűrés: Automatikus újrapróbálkozás mikroszakadások esetén
+        transport = httpx.HTTPTransport(retries=3)
         self.client = httpx.Client(
-            timeout=20.0,
+            transport=transport,
+            timeout=httpx.Timeout(20.0, connect=8.0),
             headers={
                 "User-Agent": (
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "

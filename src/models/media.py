@@ -86,6 +86,8 @@ class MediaItem(BaseModel):
     number_of_seasons: Optional[int] = Field(default=None, description="Sorozat esetén az évadok száma")
     trailer_url: Optional[str] = Field(default=None, description="YouTube előzetes URL vagy kulcs")
     runtime_minutes: Optional[int] = Field(default=None, description="Film hossza percben")
+    collection_id: Optional[int] = Field(default=None, description="TMDB Gyűjtemény (franchise) ID")
+    collection_name: Optional[str] = Field(default=None, description="TMDB Gyűjtemény neve (pl. 'Harry Potter Gyűjtemény')")
 
 
 def parse_release_specs(title: str, category: str = "", size_bytes: int = 0) -> dict:

@@ -1,5 +1,6 @@
 import re
-from typing import List, Optional
+import time
+from typing import Any, Dict, List, Optional
 import httpx
 from loguru import logger
 
@@ -30,9 +31,17 @@ class TMDBService:
                 self.api_key = self.DEFAULT_API_KEY
         self.language = language or settings.TMDB_LANGUAGE
 
-        self.client = httpx.Client(timeout=10.0, follow_redirects=True)
+        # Hálózati hibatűrés: Automatikus újrapróbálkozás hálózati mikroszakadás esetén
+        transport = httpx.HTTPTransport(retries=3)
+        self.client = httpx.Client(
+            transport=transport,
+            timeout=httpx.Timeout(12.0, connect=6.0),
+            follow_redirects=True,
+        )
         self._search_cache: dict[str, List[MediaItem]] = {}
         self._details_cache: dict[tuple[int, str], MediaItem] = {}
+        self._discover_cache: dict[str, tuple[List[MediaItem], float]] = {}
+        self._discover_ttl = 300.0  # 5 percig érvényes lista gyorsítótár a villámgyors lapozáshoz
 
     def _is_configured(self) -> bool:
         return bool(self.api_key)
@@ -221,60 +230,7 @@ class TMDBService:
             logger.debug(f"Hiba a TMDB IMDb find során ({clean_imdb}): {e}")
         return None
 
-    def get_popular_movies(self, limit: int = 10) -> List[MediaItem]:
-        """Lekéri a népszerű filmeket Magyarországon."""
-        return self._fetch_media_list(f"{self.BASE_URL}/movie/popular", MediaType.MOVIE, limit=limit, extra_params={"region": "HU"})
-
-    def get_popular_series(self, limit: int = 10) -> List[MediaItem]:
-        """Lekéri a népszerű sorozatokat."""
-        return self._fetch_media_list(f"{self.BASE_URL}/tv/popular", MediaType.TV, limit=limit)
-
-    def get_top_rated(self, media_type: MediaType = MediaType.MOVIE, limit: int = 10) -> List[MediaItem]:
-        """Lekéri a legmagasabbra értékelt filmeket vagy sorozatokat."""
-        path = "movie" if media_type == MediaType.MOVIE else "tv"
-        return self._fetch_media_list(f"{self.BASE_URL}/{path}/top_rated", media_type, limit=limit)
-
-    def get_by_genre(self, genre_id: int, media_type: MediaType = MediaType.MOVIE, limit: int = 10) -> List[MediaItem]:
-        """Lekéri az adott műfaj legnépszerűbb filmjeit vagy sorozatait."""
-        path = "movie" if media_type == MediaType.MOVIE else "tv"
-        params = {
-            "with_genres": genre_id,
-            "sort_by": "popularity.desc",
-        }
-        return self._fetch_media_list(f"{self.BASE_URL}/discover/{path}", media_type, limit=limit, extra_params=params)
-
-    def _fetch_media_list(
-        self, endpoint: str, media_type: MediaType, limit: int = 10, extra_params: Optional[dict] = None
-    ) -> List[MediaItem]:
-        """Segédfüggvény TMDB lista végpontok lekéréséhez."""
-        if not self._is_configured():
-            return []
-        params = {
-            "api_key": self.api_key,
-            "language": self.language,
-            "page": 1,
-        }
-        if extra_params:
-            params.update(extra_params)
-
-        try:
-            resp = self.client.get(endpoint, params=params)
-            if resp.status_code != 200:
-                return []
-            data = resp.json()
-            raw_results = data.get("results", [])[:limit]
-            items = []
-            for raw in raw_results:
-                parsed = self._parse_basic_item(raw, media_type)
-                if parsed and parsed.poster_url:
-                    items.append(parsed)
-            return items
-        except Exception as e:
-            logger.debug(f"Hiba a TMDB lista lekérésekor ({endpoint}): {e}")
-            return []
-
     def _parse_detailed_item(self, data: dict, media_type: MediaType) -> MediaItem:
-
         tmdb_id = data.get("id")
         external_ids = data.get("external_ids", {})
         imdb_id = external_ids.get("imdb_id") or data.get("imdb_id")
@@ -342,6 +298,11 @@ class TMDBService:
 
         trailer_url = f"https://www.youtube.com/watch?v={trailer_key}" if trailer_key else None
 
+        # Gyűjtemény (franchise/saga) kinyerése
+        belongs_to = data.get("belongs_to_collection")
+        collection_id = belongs_to.get("id") if isinstance(belongs_to, dict) else None
+        collection_name = belongs_to.get("name") if isinstance(belongs_to, dict) else None
+
         return MediaItem(
             tmdb_id=tmdb_id,
             imdb_id=imdb_id,
@@ -359,6 +320,8 @@ class TMDBService:
             number_of_seasons=seasons_count,
             trailer_url=trailer_url,
             runtime_minutes=runtime_minutes,
+            collection_id=collection_id,
+            collection_name=collection_name,
         )
 
     def _parse_basic_item(self, data: dict, media_type: MediaType) -> Optional[MediaItem]:
@@ -378,6 +341,8 @@ class TMDBService:
         year = int(release_date.split("-")[0]) if release_date and release_date.split("-")[0].isdigit() else None
         poster_path = data.get("poster_path")
         poster_url = f"{self.IMAGE_BASE_URL}{poster_path}" if poster_path else None
+        backdrop_path = data.get("backdrop_path")
+        backdrop_url = f"{self.BACKDROP_BASE_URL}{backdrop_path}" if backdrop_path else None
 
         return MediaItem(
             tmdb_id=tmdb_id,
@@ -388,21 +353,35 @@ class TMDBService:
             year=year,
             overview=data.get("overview") or "",
             poster_url=poster_url,
+            backdrop_url=backdrop_url,
             rating=round(data.get("vote_average", 0.0), 1) if data.get("vote_average") else None,
         )
 
-    def _fetch_media_list(self, endpoint: str, params: dict, media_type: MediaType, limit: int = 8) -> List[MediaItem]:
-        """Lekér egy listát a TMDB-ről (trending, népszerű, műfaj) és MediaItem listává alakítja."""
+    def _fetch_media_list(
+        self,
+        endpoint: str,
+        params: dict,
+        media_type: MediaType,
+        page: int = 1,
+        limit: int = 12,
+    ) -> List[MediaItem]:
+        """
+        Lekér egy listát a TMDB-ről a megadott végpontról és oldalszámról,
+        és MediaItem objektumok listájává alakítja.
+        """
+        if not self._is_configured():
+            return []
         try:
             req_params = {
                 "api_key": self.api_key,
                 "language": self.language,
                 "region": "HU",
+                "page": page,
                 **params,
             }
             resp = self.client.get(f"{self.BASE_URL}{endpoint}", params=req_params)
             if resp.status_code != 200:
-                logger.warning(f"TMDB lista hiba ({endpoint}): {resp.status_code}")
+                logger.warning(f"TMDB lista hiba ({endpoint}, page={page}): {resp.status_code}")
                 return []
             data = resp.json()
             raw_items = data.get("results", [])
@@ -418,28 +397,272 @@ class TMDBService:
                     items.append(parsed)
             return items
         except Exception as e:
-            logger.error(f"Hiba a TMDB lista lekérésekor ({endpoint}): {e}")
+            logger.error(f"Hiba a TMDB lista lekérésekor ({endpoint}, page={page}): {e}")
             return []
 
-    def get_popular_movies(self, limit: int = 8) -> List[MediaItem]:
-        """A heti / legnépszerűbb filmek listája Magyarországon."""
-        return self._fetch_media_list("/trending/movie/week", {}, MediaType.MOVIE, limit=limit)
+    def discover_media(
+        self,
+        media_type: MediaType = MediaType.MOVIE,
+        genre_ids: Optional[List[int]] = None,
+        sort_by: str = "popularity.desc",
+        year_min: Optional[int] = None,
+        year_max: Optional[int] = None,
+        page: int = 1,
+        limit: int = 12,
+        query: Optional[str] = None,
+        with_watch_providers: Optional[str] = None,
+    ) -> List[MediaItem]:
+        """
+        Univerzális média felfedező és szűrő motor a TMDB-n.
+        Támogatja: műfaj, rendezési elv, évjárat/korszak szűrés, szöveges kulcsszó, streaming szolgáltató és dinamikus lapozás.
+        """
+        if not self._is_configured():
+            return []
 
-    def get_popular_series(self, limit: int = 8) -> List[MediaItem]:
-        """A heti legnépszerűbb sorozatok listája."""
-        return self._fetch_media_list("/trending/tv/week", {}, MediaType.TV, limit=limit)
+        # Gyorsítótár kulcs előállítása
+        cache_key = f"{media_type.value}|{genre_ids}|{sort_by}|{year_min}|{year_max}|{page}|{limit}|{query}|{with_watch_providers}"
+        now = time.time()
+        if cache_key in self._discover_cache:
+            cached_items, ts = self._discover_cache[cache_key]
+            if now - ts < self._discover_ttl:
+                return cached_items
 
-    def get_top_rated(self, media_type: MediaType = MediaType.MOVIE, limit: int = 8) -> List[MediaItem]:
-        """A legjobbra értékelt filmek vagy sorozatok."""
-        path = "/movie/top_rated" if media_type == MediaType.MOVIE else "/tv/top_rated"
-        return self._fetch_media_list(path, {}, media_type, limit=limit)
+        # 1. Ha konkrét keresőszó van megadva a kategórián belül
+        if query and query.strip():
+            path = "/search/movie" if media_type == MediaType.MOVIE else "/search/tv"
+            params = {
+                "query": query.strip(),
+                "page": page,
+                "include_adult": "false",
+            }
+            if year_min and media_type == MediaType.MOVIE:
+                params["primary_release_year"] = year_min
+            elif year_min and media_type == MediaType.TV:
+                params["first_air_date_year"] = year_min
 
-    def get_by_genre(self, genre_id: int, media_type: MediaType = MediaType.MOVIE, limit: int = 8) -> List[MediaItem]:
-        """Műfaj szerinti felfedezés (pl. Akció=28, Vígjáték=35, Animáció=16, Sci-Fi=878, Krimi=80)."""
+            res = self._fetch_media_list(path, params, media_type, page=page, limit=limit)
+            self._discover_cache[cache_key] = (res, now)
+            return res
+
+        # 2. Általános discover végpont
         path = "/discover/movie" if media_type == MediaType.MOVIE else "/discover/tv"
         params = {
-            "with_genres": str(genre_id),
-            "sort_by": "popularity.desc",
+            "sort_by": sort_by,
+            "page": page,
+            "include_adult": "false",
         }
-        return self._fetch_media_list(path, params, media_type, limit=limit)
+
+        # Minőségi szűrés: a legmagasabb értékelésnél csak a releváns szavazatszámúakat nézzük
+        if sort_by.startswith("vote_average"):
+            params["vote_count.gte"] = 50
+
+        if genre_ids:
+            params["with_genres"] = ",".join(str(g) for g in genre_ids)
+
+        # Streaming szolgáltató szűrés (Netflix, HBO Max, Disney+, stb.)
+        if with_watch_providers:
+            params["with_watch_providers"] = str(with_watch_providers)
+            params["watch_region"] = "HU"
+
+        if media_type == MediaType.MOVIE:
+            if year_min:
+                params["primary_release_date.gte"] = f"{year_min}-01-01"
+            if year_max:
+                params["primary_release_date.lte"] = f"{year_max}-12-31"
+        else:
+            if year_min:
+                params["first_air_date.gte"] = f"{year_min}-01-01"
+            if year_max:
+                params["first_air_date.lte"] = f"{year_max}-12-31"
+
+        res = self._fetch_media_list(path, params, media_type, page=page, limit=limit)
+        self._discover_cache[cache_key] = (res, now)
+        return res
+
+    def get_similar(
+        self, tmdb_id: int, media_type: MediaType = MediaType.MOVIE, limit: int = 8
+    ) -> List[MediaItem]:
+        """
+        Lekéri a filmhez vagy sorozathoz hasonló tartalmakat a TMDB ajánló motorjából.
+        """
+        if not self._is_configured():
+            return []
+        path_seg = "movie" if media_type == MediaType.MOVIE else "tv"
+        items = self._fetch_media_list(f"/{path_seg}/{tmdb_id}/recommendations", {}, media_type, page=1, limit=limit)
+        if not items:
+            items = self._fetch_media_list(f"/{path_seg}/{tmdb_id}/similar", {}, media_type, page=1, limit=limit)
+        return items
+
+    def get_collection_details(self, collection_id: int) -> Dict[str, Any]:
+        """
+        Lekéri egy teljes film-gyűjtemény (franchise/saga, pl. Harry Potter, Gyűrűk Ura)
+        összes részét időrendi sorrendben.
+        """
+        if not self._is_configured() or not collection_id:
+            return {}
+
+        endpoint = f"{self.BASE_URL}/collection/{collection_id}"
+        params = {
+            "api_key": self.api_key,
+            "language": self.language,
+        }
+        try:
+            resp = self.client.get(endpoint, params=params)
+            if resp.status_code != 200:
+                return {}
+            data = resp.json()
+            raw_parts = data.get("parts", [])
+            parts: List[MediaItem] = []
+            for r in raw_parts:
+                item = self._parse_basic_item(r, MediaType.MOVIE)
+                if item:
+                    parts.append(item)
+
+            # Időrendbe rendezés a kiadási év szerint
+            parts.sort(key=lambda x: x.year or 9999)
+
+            poster_path = data.get("poster_path")
+            poster_url = f"{self.IMAGE_BASE_URL}{poster_path}" if poster_path else None
+
+            backdrop_path = data.get("backdrop_path")
+            backdrop_url = f"{self.BACKDROP_BASE_URL}{backdrop_path}" if backdrop_path else None
+
+            return {
+                "id": collection_id,
+                "name": data.get("name") or "Filmgyűjtemény",
+                "overview": data.get("overview") or "",
+                "poster_url": poster_url,
+                "backdrop_url": backdrop_url,
+                "parts": parts,
+                "count": len(parts),
+            }
+        except Exception as e:
+            logger.error(f"Hiba a filmgyűjtemény lekérésekor (ID: {collection_id}): {e}")
+            return {}
+
+    def get_person_credits(self, person_name: str, limit: int = 12) -> Dict[str, Any]:
+        """
+        Megkeresi a rendező vagy színész adatait és a legkiemelkedőbb filmjeit/sorozatait.
+        """
+        if not self._is_configured() or not person_name or not person_name.strip():
+            return {}
+
+        clean_name = person_name.strip()
+        try:
+            s_resp = self.client.get(
+                f"{self.BASE_URL}/search/person",
+                params={"api_key": self.api_key, "query": clean_name, "language": self.language},
+            )
+            if s_resp.status_code != 200:
+                return {}
+            s_data = s_resp.json()
+            persons = s_data.get("results", [])
+            if not persons:
+                return {}
+
+            person = persons[0]
+            person_id = person["id"]
+            name = person.get("name") or clean_name
+            dept = person.get("known_for_department") or "Színész / Rendező"
+            profile_path = person.get("profile_path")
+            profile_url = f"{self.IMAGE_BASE_URL}{profile_path}" if profile_path else None
+
+            c_resp = self.client.get(
+                f"{self.BASE_URL}/person/{person_id}/combined_credits",
+                params={"api_key": self.api_key, "language": self.language},
+            )
+            items: List[MediaItem] = []
+            if c_resp.status_code == 200:
+                c_data = c_resp.json()
+                raw_list = c_data.get("crew", []) if dept == "Directing" else c_data.get("cast", [])
+                if not raw_list:
+                    raw_list = c_data.get("cast", []) + c_data.get("crew", [])
+
+                raw_list.sort(key=lambda x: float(x.get("vote_count") or 0.0) + float(x.get("popularity") or 0.0), reverse=True)
+
+                seen_ids = set()
+                for r in raw_list:
+                    m_id = r.get("id")
+                    if m_id and m_id not in seen_ids:
+                        seen_ids.add(m_id)
+                        m_type = MediaType.MOVIE if r.get("media_type") == "movie" else MediaType.TV
+                        parsed = self._parse_basic_item(r, m_type)
+                        if parsed and parsed.poster_url:
+                            items.append(parsed)
+                        if len(items) >= limit:
+                            break
+
+            return {
+                "id": person_id,
+                "name": name,
+                "department": dept,
+                "profile_url": profile_url,
+                "items": items,
+            }
+        except Exception as e:
+            logger.error(f"Hiba a személy filmográfia lekérésekor ({person_name}): {e}")
+            return {}
+
+    def get_war_media(
+        self,
+        media_type: MediaType = MediaType.MOVIE,
+        page: int = 1,
+        limit: int = 12,
+        sort_by: str = "popularity.desc",
+        year_min: Optional[int] = None,
+        year_max: Optional[int] = None,
+        query: Optional[str] = None,
+    ) -> List[MediaItem]:
+        """
+        Kifejezetten háborús filmek és sorozatok lekérése (TMDB War: 10752 / War & Politics: 10768).
+        """
+        war_genre = 10752 if media_type == MediaType.MOVIE else 10768
+        return self.discover_media(
+            media_type=media_type,
+            genre_ids=[war_genre],
+            sort_by=sort_by,
+            year_min=year_min,
+            year_max=year_max,
+            page=page,
+            limit=limit,
+            query=query,
+        )
+
+    def get_popular_movies(self, page: int = 1, limit: int = 12) -> List[MediaItem]:
+        """A népszerű/felkapott filmek listája lapozással."""
+        return self._fetch_media_list("/movie/popular", {}, MediaType.MOVIE, page=page, limit=limit)
+
+    def get_popular_series(self, page: int = 1, limit: int = 12) -> List[MediaItem]:
+        """A népszerű/felkapott sorozatok listája lapozással."""
+        return self._fetch_media_list("/tv/popular", {}, MediaType.TV, page=page, limit=limit)
+
+    def get_top_rated(
+        self, media_type: MediaType = MediaType.MOVIE, page: int = 1, limit: int = 12
+    ) -> List[MediaItem]:
+        """A legjobbra értékelt filmek vagy sorozatok lapozással."""
+        path = "/movie/top_rated" if media_type == MediaType.MOVIE else "/tv/top_rated"
+        return self._fetch_media_list(path, {}, media_type, page=page, limit=limit)
+
+    def get_by_genre(
+        self,
+        genre_id: int,
+        media_type: MediaType = MediaType.MOVIE,
+        page: int = 1,
+        limit: int = 12,
+        sort_by: str = "popularity.desc",
+        year_min: Optional[int] = None,
+        year_max: Optional[int] = None,
+        query: Optional[str] = None,
+    ) -> List[MediaItem]:
+        """Műfaj szerinti felfedezés dinamikus szűréssel és lapozással."""
+        return self.discover_media(
+            media_type=media_type,
+            genre_ids=[genre_id],
+            sort_by=sort_by,
+            year_min=year_min,
+            year_max=year_max,
+            page=page,
+            limit=limit,
+            query=query,
+        )
 

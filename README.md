@@ -9,7 +9,7 @@
 [![qBittorrent](https://img.shields.io/badge/Torrent-qBittorrent-2F6792?style=flat-square&logo=qbittorrent&logoColor=white)](https://www.qbittorrent.org/)
 [![Plex](https://img.shields.io/badge/Media%20Server-Plex-E5A00D?style=flat-square&logo=plex&logoColor=white)](https://www.plex.tv/)
 [![TMDB](https://img.shields.io/badge/Metadata-TMDB-01B4E4?style=flat-square&logo=themoviedatabase&logoColor=white)](https://www.themoviedb.org/)
-[![Tests](https://img.shields.io/badge/Tests-44%20passed-success?style=flat-square)](tests/)
+[![Tests](https://img.shields.io/badge/Tests-50%20passed-success?style=flat-square)](tests/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
 
 <br>
@@ -125,7 +125,16 @@ Nem kell a számítógép előtt ülnöd a letöltéshez:
 
 | Terület | Képesség & Leírás |
 | :--- | :--- |
-| **🌟 „Mit nézzünk ma este?”** | Kezdőlapi dinamikus ajánlók: heti legnépszerűbb filmek & sorozatok (TMDB Trending), Kritikuskedvencek és gyors műfaji szűrők (Akció, Vígjáték, Sci-Fi, Animáció/Családi, Krimi). |
+| **🔔 „Mozi-Radar” & Automata Letöltő** | Mozi / még be nem mutatott filmek autonóm figyelése. Amint felkerül a hivatalos digitális kiadás (WEB-DL / BluRay) magyar szinkronnal, a rendszer magától letölti, Plexbe helyezi, és Windows Toast értesítést küld. A rossz minőségű mozis kamerás (CAM) verziókat automatikusan kiszűri! |
+| **🙈 „Rejtsd el, ami már megvan a Plexben”** | Egykattintásos intelligens könyvtárszűrő: azonnal elrejti a merevlemezeden már meglévő címeket. A már letöltött filmek kártyáján pedig megjelenik a közvetlen `✅ Plexben van ▶️` gomb. |
+| **✨ „Hasonló filmek” & TMDB Ajánló** | Ha tetszik egy film, egyetlen kattintással előhívható a TMDB neurális motorja által ajánlott 6 rokon alkotás közvetlen letöltési lehetőséggel. |
+| **📺 Streaming Szolgáltatók Szűrő** | Közvetlen szűrés a magyarországi streaming óriások kínálatára: 🔴 Netflix, 🟣 Max (HBO), 🔵 Disney+, 🍏 Apple TV+, 🟡 SkyShowtime, 📦 Prime Video. |
+| **📦 Teljes Film-Gyűjtemények (Franchise / Saga)** | Automatikusan felismeri a filmsorozatokat (pl. Harry Potter, Gyűrűk Ura, John Wick), időrendi sorrendben megjeleníti a részeket, és egyetlen kattintással letölthető a komplett saga (`⚡ Teljes gyűjtemény letöltése`). |
+| **🎭 Színész és Rendező Filmográfia** | Kattintható rendező és főszereplők a kártyákon és az infó ablakban; egyetlen kattintással kilistázza az adott filmes alkotó legnépszerűbb műveit. |
+| **⚡ 3-Szálas Párhuzamos nCore Vizsgálat** | Az oldalon lévő 12 film elérhetőségének ellenőrzése szekvenciális várakozás helyett egy biztonságos, 3 szálon futó feladatsorban történik, így 5 mp helyett ~1.2 mp alatt lefut. |
+| **🧠 Memóriabeli TTL Cache Rendszer** | Plex könyvtár-cache (120 mp) és TMDB oldal-cache (300 mp): a kártyák kirajzolása és az oldalak közötti lapozás azonnali, várakozásmentes élményt nyújt. |
+| **🛡️ Öngyógyító JSON Tárhely & Hálózati Védelem** | Atomikus mentés (.tmp + os.replace + .bak) a váratlan áramszünetek ellen; `httpx` HTTPTransport újrapróbálkozási stratégia a mikroszakadások kivédésére; qBittorrent Circuit Breaker; és fájlmozgatási zárolás-ellenőrzés. |
+| **🌟 „Mit nézzünk ma este?”** | Kezdőlapi dinamikus ajánlók: népszerű filmek & sorozatok (TMDB Trending), Háborús & Történelmi tematika, Kritikuskedvencek és gyors műfaji szűrők végtelenített lapozással. |
 | **🎯 Élő Kiadás-Jelvények** | A kártyákon azonnal látható: 🔊 Magyar 1080p / 4K HDR, 🇬🇧 Eredeti hang + Felirat, ⏳ Mozis CAM figyelmeztetés vagy 🚫 Még nincs fent nCore-on. |
 | **📋 Részletes Specifikációk** | Kiadások szerinti felbontás (2160p 4K UHD, 1080p FHD), dinamika (Dolby Vision, HDR10+, SDR), prémium hangszabványok (Dolby Atmos, TrueHD, DDP 5.1, DTS-HD MA), kodek és méret. |
 | **🎬 „Nézz bele!” Trailer** | A részletek felugró ablakban beágyazott lejátszóval egy kattintással megtekinthető a hivatalos magyar vagy eredeti YouTube előzetes. |
@@ -212,7 +221,7 @@ Amikor egy film letöltődik, a torrent kliensnek seedelnie kell azt 48 órán k
 
 ## 🧪 Tesztek
 
-A kódbázis minőségét és stabilitását **44 darab automatizált egység- és integrációs teszt** garantálja:
+A kódbázis minőségét és stabilitását **50 darab automatizált egység- és integrációs teszt** garantálja:
 
 ```bash
 python -m pytest
@@ -221,13 +230,16 @@ python -m pytest
 Főbb tesztelt területek:
 - Pydantic beállítások és környezeti változók validációja
 - Kiadás-specifikációk kinyerése (4K UHD, HDR, Dolby Atmos, méretek)
-- TMDB keresés, toplisták és beágyazott előzetesek
+- TMDB keresés, toplisták, kategóriák és beágyazott előzetesek
 - nCore HTML táblázat parzolás és minőségi pontozó algoritmus
-- qBittorrent kapcsolatkezelés és Hit & Run 48 órás figyelés
+- qBittorrent kapcsolatkezelés, Circuit Breaker és Hit & Run 48 órás figyelés
 - Felirat kódolás javítás (CP1250 ➡️ UTF-8) és release név illesztés
-- Plex médiarendező (Hardlink, mintafájlok szűrése, felbontás kinyerés)
+- Plex médiarendező (Hardlink, fájlzár védelem, mintafájlok szűrése, felbontás kinyerés)
 - Intelligens tárhelyvédelem és lemezterület-ellenőrzés
-- Kívánságlista (Watchlist) perzisztens tárolása
+- Kívánságlista (Watchlist) és Mozi-Radar perzisztens tárolása
+- Öngyógyító atomikus JSON perzisztencia és `.bak` visszaállítás
+- Memóriabeli TTL gyorsítótárak (Plex könyvtár, TMDB oldalak)
+- Párhuzamos 3-szálas nCore kötegelt vizsgálat
 - Sorozat évadcsomagok (`Pack`) feldolgozása
 - Windows tálcaikon és önálló háttérfolyamat (Worker daemon)
 
@@ -247,12 +259,12 @@ ncore-plex-downloader/
 ├── scripts/
 │   ├── build_exe.py          # PyInstaller EXE fordító szkript
 │   └── package_release.py    # Terjeszthető, tiszta ZIP csomagoló szkript
-├── tests/                    # 44 db automatizált pytest teszt
+├── tests/                    # 50 db automatizált pytest teszt
 └── src/
     ├── config/               # Pydantic beállításkezelő (.env betöltés és mentés)
     ├── models/               # Adatmodellek (MediaItem, TorrentRelease, SubtitleItem)
     ├── services/             # TMDB, nCore, qBittorrent, Felirat, Plex és Tálca modulok
-    ├── core/                 # Hardlink szervező, Watchlist, Autostart, Worker és Orkesztrátor
+    ├── core/                 # Hardlink szervező, Watchlist, Mozi-Radar, Atomikus tárhely, Autostart, Worker és Orkesztrátor
     └── ui/                   # Streamlit webes és mobilbarát felhasználói felület
 ```
 

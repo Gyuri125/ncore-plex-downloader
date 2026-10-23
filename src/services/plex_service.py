@@ -1,4 +1,5 @@
-from typing import Optional
+import time
+from typing import Dict, Optional, Tuple
 from loguru import logger
 
 try:
@@ -22,6 +23,10 @@ class PlexService:
         self.token = token or settings.PLEX_TOKEN
         self.auto_refresh = settings.AUTO_REFRESH_PLEX
         self.server: Optional["PlexServer"] = None
+
+        # Memóriabeli TTL gyorsítótár a has_media lekérdezésekhez (120 mp lejárattal)
+        self._has_media_cache: Dict[Tuple[str, Optional[int]], Tuple[bool, float]] = {}
+        self._cache_ttl = 120.0
 
     def _is_configured(self) -> bool:
         return bool(
@@ -82,6 +87,7 @@ class PlexService:
 
             if scanned_any:
                 logger.info("Plex könyvtárfrissítés sikeresen elindítva!")
+                self.clear_cache()
                 return True
             else:
                 logger.warning(f"Nem található megfelelő típusú Plex szekció ({media_type})")
@@ -90,6 +96,10 @@ class PlexService:
         except Exception as e:
             logger.error(f"Hiba a Plex könyvtárfrissítés során: {str(e)}")
             return False
+
+    def clear_cache(self):
+        """Kiüríti a meglévő Plex média jelenléti gyorsítótárat."""
+        self._has_media_cache.clear()
 
     def refresh_movies(self) -> bool:
         """Kifejezetten a filmek szekció frissítése."""
@@ -100,21 +110,42 @@ class PlexService:
         return self.refresh_library(media_type="show")
 
     def has_media(self, title: str, year: Optional[int] = None) -> bool:
-        """Ellenőrzi, hogy a film vagy sorozat már szerepel-e a Plex könyvtárban."""
+        """
+        Ellenőrzi, hogy a film vagy sorozat már szerepel-e a Plex könyvtárban.
+        Memóriabeli TTL gyorsítótárral van ellátva (120 mp), így 24 kártya kirajzolásakor
+        nem indít 24 külön hálózati kérést, hanem azonnal, 0.001 ms alatt visszaadja az eredményt.
+        """
+        if not title:
+            return False
+
+        clean_title = title.strip().lower()
+        cache_key = (clean_title, year)
+        now = time.time()
+
+        if cache_key in self._has_media_cache:
+            res_val, timestamp = self._has_media_cache[cache_key]
+            if now - timestamp < self._cache_ttl:
+                return res_val
+
         if not self._is_configured():
             return False
         if not self.is_connected() and not self.connect():
             return False
+
         try:
             results = self.server.library.search(title)
-            title_lower = title.strip().lower()
+            found = False
             for res in results:
-                if res.title.strip().lower() == title_lower:
+                if res.title.strip().lower() == clean_title:
                     if year and hasattr(res, "year") and res.year:
                         if abs(res.year - year) <= 1:
-                            return True
+                            found = True
+                            break
                     else:
-                        return True
-            return False
+                        found = True
+                        break
+            self._has_media_cache[cache_key] = (found, now)
+            return found
         except Exception:
+            self._has_media_cache[cache_key] = (False, now)
             return False

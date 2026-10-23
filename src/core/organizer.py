@@ -169,16 +169,75 @@ class MediaOrganizer:
             logger.error(f"Hiba a fájl elhelyezésekor ({src} -> {dst}): {str(e)}")
             return False
 
+    def _is_file_ready(self, file_path: Path) -> bool:
+        """
+        Biztonsági ellenőrzés a fájl mozgatása előtt:
+        1. Nem befejezetlen kiterjesztés (.!qB, .part, .downloading)?
+        2. Nem üres fájl (méret > 0)?
+        3. Nincs írási zárolás alatt egy másik folyamat (pl. még író torrentkliens) által?
+        """
+        try:
+            if not file_path.exists() or not file_path.is_file():
+                return False
+            name_lower = file_path.name.lower()
+            if any(name_lower.endswith(ext) for ext in [".!qb", ".part", ".tmp", ".downloading", ".crdownload"]):
+                logger.debug(f"A fájl még letöltés alatt áll (befejezetlen kiterjesztés): {file_path.name}")
+                return False
+
+            if file_path.stat().st_size == 0:
+                return False
+
+            # Tesztnyitás bináris olvasásra a zároltság teszteléséhez
+            with open(file_path, "rb") as test_f:
+                test_f.read(1024)
+            return True
+        except (IOError, PermissionError) as lock_err:
+            logger.warning(f"A fájl még írási zárolás alatt van: {file_path.name} ({lock_err})")
+            return False
+        except Exception:
+            return False
+
+    def cleanup_old_temp_files(self, days: int = 7) -> int:
+        """
+        Kitakarítja a letöltési munkamappából a 'days' napnál régebbi
+        segédfájlokat (pl. régi .torrent állományok). Visszaadja a törölt fájlok számát.
+        """
+        import time
+        deleted_count = 0
+        cutoff_time = time.time() - (days * 86400)
+        temp_torrents_dir = self.settings.DOWNLOAD_TEMP_DIR / "_torrents"
+        if not temp_torrents_dir.exists():
+            return 0
+
+        try:
+            for f in temp_torrents_dir.glob("*.torrent"):
+                if f.is_file() and f.stat().st_mtime < cutoff_time:
+                    try:
+                        f.unlink()
+                        deleted_count += 1
+                    except Exception:
+                        pass
+            if deleted_count > 0:
+                logger.info(f"Ideiglenes munkamappa karbantartva: {deleted_count} db régi segédfájl törölve.")
+        except Exception as e:
+            logger.debug(f"Hiba az ideiglenes fájlok takarításakor: {e}")
+
+        return deleted_count
+
     def _find_video_files(self, path: Path) -> List[Path]:
         """
-        Megkeresi a valódi média videófájlokat, kiszűrve a mintafájlokat (samples).
+        Megkeresi a valódi média videófájlokat, kiszűrve a mintafájlokat (samples) és a zárolt állományokat.
         """
         if path.is_file():
-            return [path] if path.suffix.lower() in self.VIDEO_EXTENSIONS else []
+            if self._is_file_ready(path) and path.suffix.lower() in self.VIDEO_EXTENSIONS:
+                return [path]
+            return []
 
         videos = []
         for file in path.rglob("*"):
             if file.is_file() and file.suffix.lower() in self.VIDEO_EXTENSIONS:
+                if not self._is_file_ready(file):
+                    continue
                 # Mintafájlok kiszűrése (pl. sample.mkv vagy 150 MB alatti minták)
                 name_lower = file.name.lower()
                 size_mb = file.stat().st_size / (1024 * 1024)

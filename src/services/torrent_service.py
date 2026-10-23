@@ -42,6 +42,7 @@ class TorrentService:
 
         self.client: Optional["qbittorrentapi.Client"] = None
         self._last_failed_connect = 0.0
+        self._consecutive_failures = 0
 
     @staticmethod
     def find_qbittorrent_exe() -> Optional[Path]:
@@ -139,8 +140,9 @@ class TorrentService:
             logger.error("A 'qbittorrent-api' könyvtár nincs telepítve! Futtasd: pip install qbittorrent-api")
             return False
 
-        # Ha nemrég próbáltuk és nem fut, azonnal lépjünk tovább
-        if time.time() - self._last_failed_connect < 10.0:
+        # Circuit Breaker: Dinamikus pihentetés ismétlődő hibák esetén (10 mp -> max 30 mp)
+        backoff = min(30.0, 10.0 + (self._consecutive_failures * 3.0))
+        if time.time() - self._last_failed_connect < backoff:
             return False
 
         # Előzetes gyors socket ellenőrzés
@@ -165,6 +167,7 @@ class TorrentService:
             if not port_open:
                 self.client = None
                 self._last_failed_connect = time.time()
+                self._consecutive_failures += 1
                 return False
 
         try:
@@ -178,22 +181,27 @@ class TorrentService:
             version = self.client.app.version
             api_version = self.client.app.web_api_version
             logger.info(f"Sikeres kapcsolat a qBittorrenthez! (v{version}, WebAPI: v{api_version})")
+            self._consecutive_failures = 0
+            self._last_failed_connect = 0.0
             return True
 
         except qbittorrentapi.LoginFailed:
             logger.error(f"Sikertelen qBittorrent bejelentkezés! Ellenőrizd a felhasználónevet és jelszót: {self.host}")
             self.client = None
             self._last_failed_connect = time.time()
+            self._consecutive_failures += 1
             return False
         except qbittorrentapi.APIConnectionError as e:
             logger.error(f"Nem sikerült csatlakozni a qBittorrent WebUI-hoz ({self.host}): {str(e)}")
             self.client = None
             self._last_failed_connect = time.time()
+            self._consecutive_failures += 1
             return False
         except Exception as e:
             logger.error(f"Váratlan hiba a qBittorrent kapcsolódáskor: {str(e)}")
             self.client = None
             self._last_failed_connect = time.time()
+            self._consecutive_failures += 1
             return False
 
 

@@ -39,8 +39,9 @@ def setup_logging(project_root: Path = None):
     try:
         logger.add(
             str(log_file),
-            rotation="5 MB",
-            retention="3 days",
+            rotation="10 MB",
+            retention="7 days",
+            compression="zip",
             level="DEBUG",
             encoding="utf-8",
             format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level:<8} | {name}:{function}:{line} - {message}",

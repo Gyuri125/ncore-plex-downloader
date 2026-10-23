@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import List, Optional
 from loguru import logger
 
+from src.core.atomic_storage import atomic_save_json, load_json_with_recovery
 from src.models.media import MediaItem
 
 
@@ -17,35 +18,17 @@ class WatchlistManager:
             self.data_file = data_file
         else:
             self.data_file = Path(__file__).resolve().parent.parent.parent / "data" / "watchlist.json"
-        self._ensure_file()
-
-    def _ensure_file(self):
-        try:
-            self.data_file.parent.mkdir(parents=True, exist_ok=True)
-            if not self.data_file.exists():
-                self.data_file.write_text("[]", encoding="utf-8")
-        except Exception as e:
-            logger.error(f"Hiba a kívánságlista fájl előkészítésekor: {e}")
 
     def get_all(self) -> List[MediaItem]:
-        """Visszaadja a kívánságlistán lévő összes filmet és sorozatot."""
-        try:
-            if not self.data_file.exists():
-                return []
-            content = self.data_file.read_text(encoding="utf-8")
-            if not content.strip():
-                return []
-            raw_list = json.loads(content)
-            items = []
-            for raw in raw_list:
-                try:
-                    items.append(MediaItem(**raw))
-                except Exception:
-                    pass
-            return items
-        except Exception as e:
-            logger.error(f"Hiba a kívánságlista olvasásakor: {e}")
-            return []
+        """Visszaadja a kívánságlistán lévő összes filmet és sorozatot, automatikus .bak visszaállítással."""
+        raw_list = load_json_with_recovery(self.data_file, default_factory=list)
+        items = []
+        for raw in raw_list:
+            try:
+                items.append(MediaItem(**raw))
+            except Exception:
+                pass
+        return items
 
     def is_in_watchlist(self, tmdb_id: int) -> bool:
         """Ellenőrzi, hogy az adott film/sorozat szerepel-e a kívánságlistán."""
@@ -79,11 +62,5 @@ class WatchlistManager:
             return True
 
     def _save(self, items: List[MediaItem]) -> bool:
-        try:
-            self._ensure_file()
-            raw_list = [item.model_dump() for item in items]
-            self.data_file.write_text(json.dumps(raw_list, indent=2, ensure_ascii=False), encoding="utf-8")
-            return True
-        except Exception as e:
-            logger.error(f"Hiba a kívánságlista mentésekor: {e}")
-            return False
+        raw_list = [item.model_dump() for item in items]
+        return atomic_save_json(self.data_file, raw_list, create_backup=True)
