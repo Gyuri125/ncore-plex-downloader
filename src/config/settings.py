@@ -39,18 +39,22 @@ class Settings(BaseSettings):
     MIN_SEED_TIME_HOURS: int = Field(default=48, description="Minimum seedelési idő órában (pl. 48)")
     TARGET_RATIO: float = Field(default=1.0, description="Elérendő seed arány (pl. 1.0)")
     AUTO_REMOVE_AFTER_SEED: bool = Field(default=True, description="Automatikus eltávolítás seedelés után")
+    DELETE_TORRENT_DATA_AFTER_SEED: bool = Field(
+        default=True,
+        description="Seedelés befejezése (HnR teljesülése) után a letöltési mappából törölje a torrent fájlokat (a Plexben lévő film megőrzésével)",
+    )
 
     # Könyvtárak és Mappák
     DOWNLOAD_TEMP_DIR: Path = Field(
-        default=Path("D:/Torrents/Downloading"),
+        default_factory=lambda: Path("D:/Torrents/Downloading") if Path("D:/").exists() else Path("C:/Torrents/Downloading"),
         description="Ideiglenes letöltési mappa"
     )
     PLEX_MOVIES_DIR: Path = Field(
-        default=Path("D:/Media/Movies"),
+        default_factory=lambda: Path("D:/Media/Movies") if Path("D:/").exists() else Path("C:/Media/Movies"),
         description="Plex filmek könyvtára"
     )
     PLEX_SERIES_DIR: Path = Field(
-        default=Path("D:/Media/TV Shows"),
+        default_factory=lambda: Path("D:/Media/TV Shows") if Path("D:/").exists() else Path("C:/Media/TV Shows"),
         description="Plex sorozatok könyvtára"
     )
 
@@ -65,9 +69,14 @@ class Settings(BaseSettings):
     AUTO_REFRESH_PLEX: bool = Field(default=True, description="Automatikus Plex könyvtárfrissítés")
 
     # Alkalmazás és WebUI
+    APP_VERSION: str = Field(default="2.0.0", description="Alkalmazás verzió száma")
     APP_HOST: str = Field(default="0.0.0.0", description="WebUI hoszt (0.0.0.0 esetén helyi hálózaton is elérhető)")
     APP_PORT: int = Field(default=8501, description="WebUI port")
     DEBUG_MODE: bool = Field(default=False, description="Részletes hibakeresési mód")
+    CONFIRM_BEFORE_DOWNLOAD: bool = Field(
+        default=True,
+        description="Megerősítő előugró ablak megjelenítése a letöltés előtt (nyelv, minőség, méret ellenőrzés)",
+    )
 
 
 @lru_cache()
@@ -118,6 +127,16 @@ def save_settings(updates: dict, env_path: Optional[Path] = None) -> bool:
         with open(env_path, "w", encoding="utf-8") as f:
             f.writelines(new_lines)
         get_settings.cache_clear()
+
+        # Automatikus szinkronizálás a központi AppData mentési mappába
+        try:
+            from src.core.settings_migrator import backup_settings_to_appdata, backup_data_to_appdata
+            project_dir = env_path.parent
+            backup_settings_to_appdata(project_dir)
+            backup_data_to_appdata(project_dir)
+        except Exception:
+            pass
+
         return True
     except Exception:
         return False

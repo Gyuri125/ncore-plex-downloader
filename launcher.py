@@ -31,61 +31,136 @@ def open_browser(url: str):
         pass
 
 
+def show_error_dialog(title: str, message: str):
+    """Natív Windows hibaablakot jelenít meg a felhasználónak."""
+    if sys.platform == "win32":
+        try:
+            # 0x10 = MB_ICONERROR, 0x00 = MB_OK, 0x10000 = MB_SETFOREGROUND
+            ctypes.windll.user32.MessageBoxW(0, message, title, 0x10 | 0x10000)
+            return
+        except Exception:
+            pass
+    print(f"[{title}] {message}", file=sys.stderr)
+
+
 def find_project_root() -> Path:
-    """Megkeresi a projekt gyökérmappáját tetszőleges számítógépen és könyvtárban."""
-    # 1. Ha a launcher.py fájl mellett van a forráskód
-    current_dir = Path(__file__).resolve().parent
-    if (current_dir / "src" / "ui" / "app.py").exists():
-        return current_dir
+    """Megkeresi a projekt gyökérmappáját tetszőleges számítógépen és könyvtárszerkezetben."""
+    search_bases = []
 
-    # 2. Ha PyInstaller onefile EXE fut, a futtatható fájl mappáját vizsgáljuk
+    # 1. launcher.py saját mappája
     try:
-        exe_dir = Path(sys.executable).resolve().parent
-        if (exe_dir / "src" / "ui" / "app.py").exists():
-            return exe_dir
+        search_bases.append(Path(__file__).resolve().parent)
     except Exception:
         pass
 
-    # 3. Aktuális munkakönyvtár vizsgálata
+    # 2. PyInstaller futtatható állomány (.exe) mappája
     try:
-        cwd = Path.cwd()
-        if (cwd / "src" / "ui" / "app.py").exists():
-            return cwd
+        search_bases.append(Path(sys.executable).resolve().parent)
     except Exception:
         pass
 
-    # 4. Keresés a felhasználó standard könyvtáraiban dinamikusan
+    # 3. Aktuális munkakönyvtár
+    try:
+        search_bases.append(Path.cwd().resolve())
+    except Exception:
+        pass
+
+    # Ellenőrizzük a bázis mappákat, valamint közvetlen gyermekeiket és szülőjüket
+    for base in list(search_bases):
+        # Közvetlen egyezés
+        if (base / "src" / "ui" / "app.py").is_file():
+            return base
+
+        # Alkonyvtárak ellenőrzése (pl. ncore-plex-downloader, src, stb.)
+        try:
+            if base.is_dir():
+                for child in base.iterdir():
+                    if child.is_dir() and (child / "src" / "ui" / "app.py").is_file():
+                        return child
+        except Exception:
+            pass
+
+        # Szülőkönyvtár és szülő testvérkönyvtárainak ellenőrzése
+        try:
+            parent = base.parent
+            if (parent / "src" / "ui" / "app.py").is_file():
+                return parent
+            if parent.is_dir():
+                for child in parent.iterdir():
+                    if child.is_dir() and (child / "src" / "ui" / "app.py").is_file():
+                        return child
+        except Exception:
+            pass
+
+    # 4. Keresés standard könyvtárakban
     user_home = Path.home()
-    for sub in ["PycharmProjects", "Documents", "Desktop", "Downloads"]:
-        for cand_name in ["ncore-plex-downloader", "Ncore_Film&Sori_letöltő", "Ncore_Media_Letolto", "ncore_downloader"]:
-            cand = user_home / sub / cand_name
-            if (cand / "src" / "ui" / "app.py").exists():
-                return cand
+    standard_dirs = [
+        Path(r"C:\Segedprogramok\Ncore"),
+        Path(r"C:\Segedprogramok"),
+        user_home / "PycharmProjects",
+        user_home / "Desktop",
+        user_home / "Documents",
+        user_home / "Downloads",
+        Path(r"C:\Media"),
+    ]
+    cand_names = [
+        "ncore-plex-downloader",
+        "Ncore_Film&Sori_letöltő",
+        "Ncore_Media_Letolto",
+        "ncore_downloader",
+    ]
 
-    # 5. Fix teszt útvonal fallback
-    fixed_path = Path(r"C:\Users\gyuri\PycharmProjects\Ncore_Film&Sori_letöltő")
-    if (fixed_path / "src" / "ui" / "app.py").exists():
-        return fixed_path
+    for sdir in standard_dirs:
+        if not sdir.exists():
+            continue
+        for cname in cand_names:
+            target = sdir / cname
+            if (target / "src" / "ui" / "app.py").is_file():
+                return target
+            if (target / "ncore-plex-downloader" / "src" / "ui" / "app.py").is_file():
+                return target / "ncore-plex-downloader"
 
-    return current_dir
+    # Ha sehol nem találta, dobjunk egyértelmű hibát
+    current = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd()
+    if (current / "src" / "ui" / "app.py").is_file():
+        return current
+
+    raise FileNotFoundError(
+        "Nem található a program forráskódja ('src/ui/app.py')!\n\n"
+        "Kérlek bizonyosodj meg róla, hogy a letöltött ZIP csomagot teljes egészében kicsomagoltad, "
+        "és a fájlok egy mappában találhatók."
+    )
 
 
 def find_python_interpreter(project_root: Path) -> str:
-    """Megkeresi a megfelelő Python értelmezőt (.venv, venv, PATH vagy dinamikus AppData)."""
-    # 1. .venv a projektben
-    venv_py = project_root / ".venv" / "Scripts" / "python.exe"
-    if venv_py.exists():
-        return str(venv_py)
+    """Megkeresi a megfelelő Python értelmezőt (.venv, venv, PATH vagy dinamikus telepítések)."""
+    # 1. Helyi virtuális környezet (.venv vagy venv a projektben vagy a szülőben)
+    for cand in [
+        project_root / ".venv" / "Scripts" / "python.exe",
+        project_root / "venv" / "Scripts" / "python.exe",
+        project_root.parent / ".venv" / "Scripts" / "python.exe",
+        project_root.parent / "venv" / "Scripts" / "python.exe",
+    ]:
+        if cand.exists():
+            return str(cand)
 
-    # 2. venv a projektben
-    venv_py2 = project_root / "venv" / "Scripts" / "python.exe"
-    if venv_py2.exists():
-        return str(venv_py2)
+    # 2. Rendszer python a PATH-on
+    for cmd in ["python", "python3", "py"]:
+        which_py = shutil.which(cmd)
+        if which_py:
+            return which_py
 
-    # 3. Rendszer python a PATH-on
-    which_py = shutil.which("python") or shutil.which("python3")
-    if which_py:
-        return which_py
+    # 3. Standard 64-bites és 32-bites Program Files könyvtárak
+    for base_pf in [r"C:\Program Files", r"C:\Program Files (x86)"]:
+        pf_path = Path(base_pf)
+        if pf_path.exists():
+            try:
+                candidates = sorted(pf_path.glob("Python3*/python.exe"), reverse=True)
+                for cand in candidates:
+                    if cand.exists():
+                        return str(cand)
+            except Exception:
+                pass
 
     # 4. Dinamikus keresés a felhasználó AppData\Local\Programs\Python mappájában
     try:
@@ -98,7 +173,7 @@ def find_python_interpreter(project_root: Path) -> str:
     except Exception:
         pass
 
-    return "python"
+    return sys.executable or "python"
 
 
 def kill_port_occupants(port: int = 8501):
@@ -121,8 +196,24 @@ def kill_port_occupants(port: int = 8501):
 
 def main():
     project_root = find_project_root()
+    os.chdir(project_root)
+
     if str(project_root) not in sys.path:
         sys.path.insert(0, str(project_root))
+
+    # Ha a szülő mappában van .env, de a gyökérben nincs, másoljuk át automatikusan!
+    if not (project_root / ".env").exists():
+        for cand_env in [
+            project_root.parent / ".env",
+            Path(sys.executable).resolve().parent / ".env",
+            Path.cwd().parent / ".env"
+        ]:
+            if cand_env.exists() and cand_env != (project_root / ".env"):
+                try:
+                    shutil.copy2(cand_env, project_root / ".env")
+                    break
+                except Exception:
+                    pass
 
     # Naplózás inicializálása
     from src.core.logger import setup_logging
@@ -238,4 +329,38 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as exc:
+        import datetime
+        import traceback
+        err_msg = traceback.format_exc()
+        now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        try:
+            logger.error(f"Kritikus hiba az indításkor: {err_msg}")
+        except Exception:
+            pass
+
+        # Naplózás gyökér és logs/ mappába
+        try:
+            logs_dir = Path("logs")
+            logs_dir.mkdir(parents=True, exist_ok=True)
+            with open("startup_error.log", "w", encoding="utf-8") as f:
+                f.write(err_msg)
+            with open(logs_dir / "startup_error.log", "w", encoding="utf-8") as f:
+                f.write(err_msg)
+            with open(logs_dir / "telepites_log.txt", "a", encoding="utf-8") as f:
+                f.write(f"\n[{now_str}] [KRITIKUS INDÍTÁSI HIBA]\n{err_msg}\n")
+        except Exception:
+            pass
+
+        show_error_dialog(
+            "Ncore Média Letöltő - Indítási Hiba",
+            f"Nem sikerült az alkalmazás elindítása:\n\n{exc}\n\n"
+            f"Részletes indítási napló mentve ide:\n"
+            f" - logs\\startup_error.log\n"
+            f" - logs\\telepites_log.txt\n\n"
+            "Tipp: Futtasd a TELEPITO_ES_INDITO.bat fájlt a környezet és a függőségek automatikus helyreállításához!"
+        )
+        sys.exit(1)

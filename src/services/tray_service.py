@@ -207,7 +207,7 @@ class TrayService:
             return
 
         icon_image = create_tray_icon_image()
-        initial_title = "Ncore Média Letöltő (Kattints a megnyitáshoz)"
+        initial_title = "Ncore Média Letöltő v2.0.0 (Kattints a megnyitáshoz)"
         menu = self._build_menu()
 
         self.icon = pystray.Icon(

@@ -1,4 +1,7 @@
+import datetime
 import re
+import threading
+import unicodedata
 from pathlib import Path
 from typing import List, Optional
 import httpx
@@ -54,9 +57,19 @@ class NcoreService:
             follow_redirects=True,
         )
         self._is_logged_in = False
+        self._login_lock = threading.Lock()
 
     def _is_configured(self) -> bool:
         return bool(self.username and self.password and self.username != "felhasznaloneved")
+
+    def _ensure_logged_in(self) -> bool:
+        """Szálbiztos nCore bejelentkezés dupla ellenőrzéssel (Double-checked locking)."""
+        if self._is_logged_in:
+            return True
+        with self._login_lock:
+            if self._is_logged_in:
+                return True
+            return self.login()
 
     def login(self) -> bool:
         """
@@ -97,12 +110,108 @@ class NcoreService:
             logger.error(f"Hiba az nCore bejelentkezés során: {str(e)}")
             return False
 
+    ACCEPTED_RELEASE_EXTRAS = {
+        "extended", "unrated", "directors", "cut", "remastered", "special", "edition",
+        "imax", "proper", "repack", "rerip", "open", "matte", "dual", "hun", "eng", "sub",
+        "theatrical", "final", "collector", "collectors", "anniversary", "restored",
+        "part", "one", "1", "i"
+    }
+
+    @staticmethod
+    def _normalize_title_text(text: str) -> str:
+        if not text:
+            return ""
+        deaccent = "".join(c for c in unicodedata.normalize("NFD", text) if unicodedata.category(c) != "Mn")
+        cleaned = re.sub(r"[^a-zA-Z0-9\s]", " ", deaccent).lower()
+        return re.sub(r"\s+", " ", cleaned).strip()
+
+    @classmethod
+    def _get_release_title_stem(cls, rel_title: str) -> str:
+        norm = cls._normalize_title_text(rel_title)
+        # 1. Először a technikai/minőségi tageknél vágunk
+        m_tag = re.search(r"\b(1080p|720p|2160p|4k|bluray|bdrip|web\s*dl|webrip|dvdrip|xvid|x264|x265|hevc|hun)\b", norm)
+        if m_tag and m_tag.start() > 0:
+            norm = norm[:m_tag.start()].strip()
+        # 2. Vágjuk le a sorozat évad/epizód jelölések előtt
+        m_series = re.search(r"\b(s\d{1,2}(?:e\d{1,3})?|season\s*\d{1,2}|e\d{1,3}|ep\d{1,3}|d\d{1,2}|disc\s*\d{1,2}|complete|pack)\b", norm)
+        if m_series and m_series.start() > 0:
+            norm = norm[:m_series.start()].strip()
+        # 3. Az évszámnál csak akkor vágunk, ha nem a legelső szó (pl. '1917'), és mindig az utolsó évszámot vágjuk le (pl. 'Blade Runner 2049 2017')
+        year_matches = list(re.finditer(r"\b(19\d\d|20\d\d)\b", norm))
+        if year_matches:
+            last_year = year_matches[-1]
+            if last_year.start() > 0:
+                norm = norm[:last_year.start()].strip()
+        return norm
+
+    def is_title_match(
+        self,
+        release_title: str,
+        title_hu: str,
+        title_en: Optional[str] = "",
+        original_title: Optional[str] = "",
+    ) -> bool:
+        """
+        Ellenőrzi, hogy a release címe valóban megegyezik-e a média magyar, angol vagy eredeti gyártási címével.
+        Kiszűri az idegen filmeket, dokumentumfilmeket, mellékágakat és téves találatokat.
+        """
+        stem = self._get_release_title_stem(release_title)
+        if not stem:
+            return False
+
+        stem_words = set(stem.split())
+        all_candidates = [t for t in [title_hu, title_en, original_title] if t]
+
+        for cand in all_candidates:
+            # Kipróbáljuk a címet kezdő névelővel és névelő nélkül is (pl. 'A hobbit', 'The Dark Knight', 'La casa de papel')
+            cands_to_check = [cand]
+            cand_l = cand.lower().strip()
+            for prefix in ("a ", "az ", "the ", "le ", "la ", "les ", "el ", "los ", "las ", "der ", "die ", "das "):
+                if cand_l.startswith(prefix):
+                    cands_to_check.append(cand[len(prefix):].strip())
+
+            for c in cands_to_check:
+                c_norm = self._normalize_title_text(c)
+                if not c_norm:
+                    continue
+
+                c_words = c_norm.split()
+
+                # 1. Pontos egyezés (pl. 'the odyssey' == 'the odyssey')
+                if stem == c_norm:
+                    return True
+
+                # 2. Ha a stem a címmel kezdődik (pl. 'the odyssey extended' vagy 'dune part one')
+                if stem.startswith(c_norm + " "):
+                    extra_suffix = stem[len(c_norm):].strip()
+                    extra_words = set(extra_suffix.split())
+                    if extra_words.issubset(self.ACCEPTED_RELEASE_EXTRAS):
+                        return True
+                    continue
+
+                # 3. Kétnyelvű kiadások az nCore-on (pl. 'Odusszeia The Odyssey' vagy 'La Casa de Papel Money Heist')
+                if c_norm in stem and (len(c_words) >= 2 or len(c_norm) >= 5):
+                    remaining = stem.replace(c_norm, " ")
+                    for other_cand in [t for t in all_candidates if t != cand]:
+                        other_norm = self._normalize_title_text(other_cand)
+                        if other_norm:
+                            remaining = remaining.replace(other_norm, " ")
+                    rem_words = set(remaining.split())
+                    if rem_words.issubset(self.ACCEPTED_RELEASE_EXTRAS) or len(rem_words) == 0:
+                        return True
+
+                # 4. Egyszavas vagy rövid címek
+                if len(c_words) == 1 and c_words[0] in stem_words and len(stem_words) <= 3:
+                    return True
+
+        return False
+
     def search_for_media(self, media_item: MediaItem) -> List[TorrentRelease]:
         """
         Keresés egy MediaItem-hez (TMDB film vagy sorozat).
         1. Elsődlegesen IMDb kód alapján (100% tévedésmentes találat!).
         2. Ha nincs IMDb találat, akkor a magyar és eredeti cím alapján.
-        3. Találatok szigorú ellenőrzése (IMDb kód, évszám, típus) a téves találatok kizárására.
+        3. Találatok szigorú ellenőrzése (IMDb kód, évszám, típus, kötelező címazonosság) a téves találatok kizárására.
         4. Rangsorolás: 1. Magyar szinkron, 2. Legjobb felbontás/minőség.
         """
         results: List[TorrentRelease] = []
@@ -114,15 +223,32 @@ class NcoreService:
 
         # 2. Ha nem talált semmit IMDb alapján, keresés cím szerint
         if not results:
-            search_title = media_item.title_en or media_item.title_hu
+            search_title = media_item.title_hu or media_item.title_en
             logger.info(f"nCore keresés cím alapján: {search_title} ({media_item.year or ''})")
             results = self.search_by_title(
                 title=search_title,
                 media_type=media_item.media_type,
                 year=media_item.year,
             )
+            # Ha a magyar cím nem adott találatot és van ettől eltérő angol cím, keresünk azzal is
+            if not results and media_item.title_en and media_item.title_en.lower() != (search_title or "").lower():
+                logger.info(f"nCore keresés angol cím alapján is: {media_item.title_en}")
+                results = self.search_by_title(
+                    title=media_item.title_en,
+                    media_type=media_item.media_type,
+                    year=media_item.year,
+                )
+            # Ha az angol cím sem adott találatot és van ettől eltérő eredeti gyártási cím, keresünk azzal is
+            orig_t = getattr(media_item, "original_title", None)
+            if not results and orig_t and orig_t.lower() not in ((search_title or "").lower(), (media_item.title_en or "").lower()):
+                logger.info(f"nCore keresés eredeti gyártási cím alapján is: {orig_t}")
+                results = self.search_by_title(
+                    title=orig_t,
+                    media_type=media_item.media_type,
+                    year=media_item.year,
+                )
 
-        # 3. Ellenőrzés: csak a valóban egyező kiadások megtartása
+        # 3. Ellenőrzés: csak a valóban egyező kiadások megtartása (szigorú cím- és évszám-szűrés)
         verified = [r for r in results if self.verify_release_match(r, media_item)]
         logger.info(f"nCore találatok: {len(results)} db nyers találatból {len(verified)} db felel meg a keresett filmnek.")
 
@@ -134,8 +260,10 @@ class NcoreService:
         Szigorúan ellenőrzi, hogy a release valóban a kiválasztott filmhez/sorozathoz tartozik-e.
         1. Kategória ellenőrzés (csak a megfelelő média típusú kategóriák fogadhatók el).
         2. IMDb azonosító ellenőrzése (ha a release-ben szerepel IMDb ID, annak pontosan egyeznie kell).
-        3. Típus ellenőrzés (filmeknél nem lehet sorozat epizód/évad).
-        4. Évszám ellenőrzése (ha a címben van évszám, egyeznie kell +-1 év toleranciával).
+        3. Típus és lemezformátum ellenőrzés (filmeknél nem lehet sorozat epizód/évad, sem D01/Disc 1 sorozatcsomag).
+        4. Évszám ellenőrzése (ha a címben van évszám, egyeznie kell +-1 év toleranciával; jövőbeli filmeknél kötelező az évszám).
+        5. Kötelező címellenőrzés: A release törzsének kötelezően egyeznie kell a magyar vagy eredeti címmel!
+        6. Szemét és nem kívánt kiadások kizárása (making of, behind the scenes, soundtrack, kulisszák mögött).
         """
         # 1. Kategória érvényesség
         valid_cats = (
@@ -146,7 +274,7 @@ class NcoreService:
         if release.category not in valid_cats:
             return False
 
-        # 2. IMDb azonosító ellenőrzés (100%-os bizonyosság)
+        # 2. IMDb azonosító ellenőrzés (ha mindkettőnél megvan, az a legbiztosabb)
         if release.imdb_id and media_item.imdb_id:
             if release.imdb_id.strip().lower() != media_item.imdb_id.strip().lower():
                 return False
@@ -155,17 +283,35 @@ class NcoreService:
 
         title_lower = release.title.lower()
 
-        # 3. Sorozat epizódok kizárása filmek esetén
+        # 3. Sorozat epizódok és több-lemezes kiadások kizárása filmek esetén
         if media_item.media_type == MediaType.MOVIE:
-            if re.search(r"\b(s\d{1,2}|season\s*\d{1,2}|e\d{1,3}|ep\d{1,3})\b", title_lower):
+            # Epizódok és lemezcímkék (pl. S01, E01, D01, Disc 1, Part 1)
+            if re.search(r"\b(s\d{1,2}|season\s*\d{1,2}|e\d{1,3}|ep\d{1,3}|d\d{1,2}|disc\s*\d{1,2})\b", title_lower):
+                item_title_clean = (media_item.title_hu + " " + (media_item.title_en or "")).lower()
+                if not re.search(r"\b(part|disc|d\d)\b", item_title_clean):
+                    return False
+
+            # Extrák, kulisszák mögött, bemutatók kizárása
+            if re.search(r"\b(making of|behind the scenes|featurette|soundtrack|ost|kulisszak mogott)\b", title_lower):
                 return False
 
-        # 4. Évszám ellenőrzés (filmeknél ne engedjünk át más évjáratú azonos című filmet)
+        # 4. Évszám ellenőrzés
+        current_year = datetime.date.today().year
+        found_years = [int(y) for y in re.findall(r"\b(19\d\d|20\d\d)\b", release.title)]
         if media_item.media_type == MediaType.MOVIE and media_item.year:
-            found_years = [int(y) for y in re.findall(r"\b(19\d\d|20\d\d)\b", release.title)]
             if found_years:
                 if not any(abs(y - media_item.year) <= 1 for y in found_years):
                     return False
+            else:
+                # Ha jövőbeli vagy aktuális filmről van szó (pl. 2026), és a release címében egyáltalán nincs évszám,
+                # az biztosan nem a valódi premier kiadás
+                if media_item.year >= current_year:
+                    return False
+
+        # 5. Kötelező Címellenőrzés (magyar, angol VAGY eredeti gyártási cím alapján)
+        orig_t = getattr(media_item, "original_title", None)
+        if not self.is_title_match(release.title, media_item.title_hu, media_item.title_en, orig_t):
+            return False
 
         return True
 
@@ -214,7 +360,7 @@ class NcoreService:
         """
         Lefuttatja a GET kérést a torrents.php felé és feldolgozza a HTML táblázatot.
         """
-        if not self._is_logged_in and not self.login():
+        if not self._ensure_logged_in():
             logger.warning("Nincs aktív nCore munkamenet a kereséshez.")
             return []
 
@@ -225,11 +371,12 @@ class NcoreService:
             # Ha lejárt a munkamenet, bejelentkezünk újra
             if "login.php" in str(response.url):
                 logger.info("nCore munkamenet lejárt, újra bejelentkezés...")
-                if self.login():
-                    response = self.client.get(self.TORRENTS_URL, params=params)
-                    response.raise_for_status()
-                else:
-                    return []
+                with self._login_lock:
+                    self._is_logged_in = False
+                    if not self.login():
+                        return []
+                response = self.client.get(self.TORRENTS_URL, params=params)
+                response.raise_for_status()
 
             # Passkey kinyerése ha még nem ismert
             if not self.passkey:
@@ -394,9 +541,11 @@ class NcoreService:
         elif "X264" in title_upper or "H264" in title_upper:
             score += 100
 
-        # Büntetés rossz minőségekre
+        # Büntetés rossz minőségekre és 3D kiadásokra (hogy 2D TV-re ne töltsön le SBS 3D-t)
         if any(bad in title_upper for bad in ["CAM", "TELESYNC", " TS ", ".TS.", "HDCAM", "SCREENER"]):
             score -= 10000
+        if any(td in title_upper for td in [".3D.", " 3D ", "HALF-SBS", "H-SBS", "FULL-SBS", "H-OU"]):
+            score -= 8000
 
         # 3. Kategória bónuszok
         if rel.category in ("hd_hun", "hdser_hun", "sorozat_hun"):
@@ -408,9 +557,11 @@ class NcoreService:
         elif rel.category in ("xvid", "xvidser", "dvd", "dvdser"):
             score += 1000
 
-
-        # 4. Seeder bónusz (max +500 pont a seeder stabilitásért)
-        score += min(rel.seeders, 50) * 10
+        # 4. Seeder stabilitás és halott torrentek (seeders <= 0) súlyos büntetése
+        if rel.seeders <= 0:
+            score -= 20000
+        else:
+            score += min(rel.seeders, 50) * 10
 
         return score
 
@@ -446,6 +597,10 @@ class NcoreService:
         Letölti a .torrent fájlt az nCore-ról a megadott mappába.
         Visszaadja a letöltött .torrent fájl elérési útját.
         """
+        if not self._ensure_logged_in():
+            logger.warning("Nincs aktív nCore munkamenet a torrent letöltéshez.")
+            return None
+
         if not release.torrent_id:
             logger.error(f"Nincs letöltési URL vagy ID a torrenthez: {release.title}")
             return None

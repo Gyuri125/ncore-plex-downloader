@@ -57,10 +57,10 @@ class DiagnosticService:
         qb_info = "Nem érhető el"
         try:
             if self.orchestrator and self.orchestrator.torrent_service:
-                client = self.orchestrator.torrent_service._get_client()
-                if client:
+                ts = self.orchestrator.torrent_service
+                if ts._ensure_connected() and ts.client:
                     qb_ok = True
-                    qb_info = f"Csatlakozva (Verzió: {client.app.version})"
+                    qb_info = f"Csatlakozva (Verzió: {ts.client.app.version})"
         except Exception as e:
             qb_info = str(e)
 
@@ -75,11 +75,11 @@ class DiagnosticService:
         plex_info = "Nem érhető el"
         try:
             if self.orchestrator and self.orchestrator.plex_service:
-                srv = self.orchestrator.plex_service._get_server()
-                if srv:
+                ps = self.orchestrator.plex_service
+                if (ps.is_connected() or ps.connect()) and ps.server:
                     plex_ok = True
-                    sections = [s.title for s in srv.library.sections]
-                    plex_info = f"Csatlakozva ({srv.friendlyName}), Könyvtárak: {', '.join(sections)}"
+                    sections = [s.title for s in ps.server.library.sections()]
+                    plex_info = f"Csatlakozva ({ps.server.friendlyName}), Könyvtárak: {', '.join(sections)}"
         except Exception as e:
             plex_info = str(e)
 

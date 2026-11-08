@@ -31,8 +31,10 @@ class MovieRadarManager:
         """Csak az aktívan figyelt (még le nem töltött) filmeket adja vissza."""
         return [x for x in self.get_all() if x.get("status") == "monitoring"]
 
-    def is_monitored(self, tmdb_id: int) -> bool:
+    def is_monitored(self, tmdb_id: Any) -> bool:
         """Ellenőrzi, hogy egy adott film aktívan figyelt-e a radaron."""
+        if not tmdb_id:
+            return False
         return any(
             x.get("tmdb_id") == tmdb_id and x.get("status") == "monitoring"
             for x in self.get_all()
@@ -134,7 +136,16 @@ class MovieRadarManager:
                 logger.error(f"Hiba a Mozi-Radar tételnél ({entry.get('title_hu')}): {e}")
 
         if downloaded_now:
-            self._save(items)
+            fresh_items = self.get_all()
+            downloaded_map = {d["item"].tmdb_id: d["release"].title for d in downloaded_now}
+            now_iso = datetime.now().isoformat()
+            for entry in fresh_items:
+                t_id = entry.get("tmdb_id")
+                if t_id in downloaded_map:
+                    entry["status"] = "downloaded"
+                    entry["downloaded_at"] = now_iso
+                    entry["release_title"] = downloaded_map[t_id]
+            self._save(fresh_items)
 
         return downloaded_now
 

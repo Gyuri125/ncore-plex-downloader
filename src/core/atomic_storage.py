@@ -1,6 +1,7 @@
 import json
 import os
 import shutil
+import threading
 from pathlib import Path
 from typing import Any, Callable
 from loguru import logger
@@ -10,15 +11,17 @@ def atomic_save_json(file_path: Path, data: Any, create_backup: bool = True) -> 
     """
     Biztonságos, atomikus JSON mentés.
     
-    1. Ideiglenes fájlba (.tmp) írja az adatot.
+    1. Folyamat- és szálspecifikus ideiglenes fájlba (.tmp) írja az adatot (elkerülve a Windows WinError 32 lock ütközéseket).
     2. Ha az eredeti fájl létezik és nem üres, automatikus biztonsági másolatot készít (.bak).
     3. Az os.replace atomi művelettel lecseréli a fájlt, így egy váratlan leállás vagy
        áramkimaradás esetén sem sérülhet meg az adatállomány.
     """
+    tmp_path = None
     try:
         file_path = Path(file_path)
         file_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = file_path.with_suffix(file_path.suffix + ".tmp")
+        unique_suffix = f".{os.getpid()}_{threading.get_ident()}.tmp"
+        tmp_path = file_path.with_suffix(file_path.suffix + unique_suffix)
         bak_path = file_path.with_suffix(file_path.suffix + ".bak")
 
         json_text = json.dumps(data, indent=2, ensure_ascii=False)
@@ -33,12 +36,24 @@ def atomic_save_json(file_path: Path, data: Any, create_backup: bool = True) -> 
 
         # Atomi fájlcsere (NTFS és POSIX rendszereken is atomikus)
         os.replace(tmp_path, file_path)
+
+        # Ha data/ mappában lévő JSON adatbázis, készítsünk szinkron másolatot az AppData-ba is
+        try:
+            if "data" in file_path.parts:
+                appdata = os.environ.get("APPDATA")
+                if appdata:
+                    appdata_data = Path(appdata) / "NcoreMediaDownloader" / "data"
+                    appdata_data.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(file_path, appdata_data / file_path.name)
+        except Exception:
+            pass
+
         return True
 
     except Exception as e:
         logger.error(f"Hiba az atomikus JSON mentés során ({file_path}): {e}")
         try:
-            if tmp_path.exists():
+            if tmp_path and tmp_path.exists():
                 tmp_path.unlink()
         except Exception:
             pass

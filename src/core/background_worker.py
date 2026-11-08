@@ -70,7 +70,7 @@ class BackgroundWorker:
                     tooltip = summary.get("tooltip", "Ncore Letöltő")
                     self.tray_service.update_tooltip(tooltip)
 
-                # 4. Mozi-Radar automata ellenőrzés (~10 percenként, 40 ciklusonként)
+                # 4. Mozi-Radar és Sorozat-Radar automata ellenőrzés (~10 percenként, 40 ciklusonként)
                 self._radar_counter = getattr(self, "_radar_counter", 0) + 1
                 if self._radar_counter >= 40:
                     self._radar_counter = 0
@@ -87,7 +87,62 @@ class BackgroundWorker:
                                     message=msg,
                                 )
 
-                # 5. Ideiglenes fájlok automatikus karbantartása (~2 óránként)
+                    if hasattr(self.orchestrator, "series_radar"):
+                        series_hits = self.orchestrator.series_radar.check_and_trigger_downloads(self.orchestrator)
+                        for s_hit in series_hits:
+                            title = s_hit["title"]
+                            ep = s_hit["episode_code"]
+                            rel = s_hit["release"]
+                            msg = f"'{title}' {ep} megjelent! Letöltés elindult: {rel.title}"
+                            logger.info(f"Sorozat-Radar automatikus letöltés indult: {msg}")
+                            if self.tray_service:
+                                self.tray_service.notify(
+                                    title=f"📺 Sorozat-Radar: Új epizód ({ep})!",
+                                    message=msg,
+                                )
+
+                    if hasattr(self.orchestrator, "subtitle_radar"):
+                        sub_hits = self.orchestrator.subtitle_radar.check_and_download_subtitles(self.orchestrator)
+                        for sub_hit in sub_hits:
+                            title = sub_hit["title"]
+                            src = sub_hit.get("source", "Online")
+                            msg = f"'{title}' magyar felirata megjelent ({src})! Letöltve és hozzáadva a Plexhez!"
+                            logger.info(f"Felirat-Radar automatikus találat: {msg}")
+                            if self.tray_service:
+                                self.tray_service.notify(
+                                    title="🎬 Felirat-Radar: Megérkezett a felirat!",
+                                    message=msg,
+                                )
+
+                    if hasattr(self.orchestrator, "audio_radar"):
+                        audio_hits = self.orchestrator.audio_radar.check_and_trigger_upgrades(self.orchestrator)
+                        for a_hit in audio_hits:
+                            title = a_hit["title"]
+                            rel = a_hit["release"]
+                            msg = f"'{title}' megjelent HD magyar szinkronnal! Letöltés elindult: {rel.title}"
+                            logger.info(f"Szinkron-Radar automatikus letöltés indult: {msg}")
+                            if self.tray_service:
+                                self.tray_service.notify(
+                                    title="🔊 Szinkron-Radar: Megérkezett a magyar szinkron!",
+                                    message=msg,
+                                )
+
+                # 5. Okos Sávszélesség-Ütemező a Plex Aktív Lejátszásai Alapján (Plex-Aware Throttling)
+                if hasattr(self.orchestrator, "plex_service"):
+                    try:
+                        is_playing = self.orchestrator.plex_service.has_active_playback()
+                        if is_playing and not getattr(self, "_plex_throttled", False):
+                            logger.info("🎬 Plex aktív lejátszás észlelve! qBittorrent sebességkorlátozás bekapcsolva (akadozásmentes 4K streaminghez)...")
+                            self.orchestrator.torrent_service.set_speed_limits(download_limit_kbs=5000, upload_limit_kbs=1000)
+                            self._plex_throttled = True
+                        elif not is_playing and getattr(self, "_plex_throttled", False):
+                            logger.info("🎬 Plex lejátszás befejeződött. qBittorrent sebességkorlát feloldva (teljes sebesség visszaállítva)!")
+                            self.orchestrator.torrent_service.set_speed_limits(download_limit_kbs=0, upload_limit_kbs=0)
+                            self._plex_throttled = False
+                    except Exception as throt_err:
+                        logger.debug(f"Plex sávszélesség-szabályozási figyelmeztetés: {throt_err}")
+
+                # 6. Ideiglenes fájlok automatikus karbantartása (~2 óránként)
                 self._cleanup_counter = getattr(self, "_cleanup_counter", 0) + 1
                 if self._cleanup_counter >= 480:
                     self._cleanup_counter = 0
@@ -113,6 +168,11 @@ class BackgroundWorker:
     def stop(self):
         """Kéri a háttérszál leállítását."""
         self._stop_event.set()
+        if getattr(self, "_plex_throttled", False):
+            try:
+                self.orchestrator.torrent_service.set_speed_limits(0, 0)
+            except Exception:
+                pass
         if self._thread:
             self._thread.join(timeout=3.0)
             self._thread = None

@@ -52,6 +52,9 @@ Ncore_Film&Sori_letöltő/
     │   ├── __init__.py
     │   ├── atomic_storage.py # Atomikus JSON mentés, .bak biztonsági másolat és helyreállítás
     │   ├── movie_radar.py    # Mozi-Radar figyelő és CAM-szűrős automata letöltő
+    │   ├── series_radar.py   # Sorozat-Radar és automata új epizód letöltő motor
+    │   ├── subtitle_radar.py # Felirat-Radar utólagos feliratfigyelő és automata társító motor
+    │   ├── audio_radar.py    # Szinkron-Radar & Minőség-Upgrade automata figyelő motor
     │   ├── organizer.py      # Fájlrendező, zárolásvédelem és Plex-kompatibilis átnevező motor
     │   ├── watchlist.py      # Kívánságlista perzisztens menedzser
     │   ├── autostart.py      # Windows automatikus indítás (Registry Run kulcs)
@@ -92,15 +95,20 @@ Ncore_Film&Sori_letöltő/
    - Kizárandó vagy legutolsó helyre sorolandó: CAM, Telesync (TS), rossz minőségű kamerás verziók.
    - Seeder ellenőrzés: Csak olyan torrentet válasszunk, ahol `seeders > 0`.
 
-### C. Feliratkezelő Motor (subtitle_service.py)
+### C. Feliratkezelő Motor & Felirat-Radar (subtitle_service.py & subtitle_radar.py)
 - **Mikor indul?**
   - Ha a kiválasztott nCore kiadás **nem tartalmaz magyar hangot**, VAGY a felhasználó kifejezetten feliratos verziót kért.
-- **Források**:
-  - OpenSubtitles REST API v3
-  - Feliratok.info (web scraper / kereső modul)
-- **Illesztés**:
-  - Release név alapján (pl. `Movie.2023.1080p.WEB-DL.DDP5.1.H.264-FLUX`) pontos időzítésű felirat keresése.
+- **3-Lépcsős Kaszkád Keresési Források**:
+  1. **Feliratok.eu**: A legpontosabb hazai scene forrás, közvetlen nCore kiadásokhoz (`FLUX`, `EVO`, `BiDA`, stb.) időzítve.
+  2. **Subirat.net**: A legfrissebb streaming és mozifilmes magyar fordítások független fordítóktól.
+  3. **OpenSubtitles REST API v3**: Globális adatbázis IMDb ID és fájlhash alapján garantált találatokkal.
+- **Illesztés & Kódolás**:
+  - Release név alapján pontos időzítésű felirat kiválasztása pontozásos algoritmussal.
+  - Automatikus UTF-8 kódolásra konvertálás (CP1250 / Latin-2 ékezetek javítása).
   - Átnevezés a videofájl nevére: `Filmnév (Év).hu.srt`.
+- **Felirat-Radar (subtitle_radar.py)**:
+  - Ha a letöltéskor még nem létezik magyar felirat, a rendszer automatikusan felveszi a médiát a Felirat-Radar figyelőlistájára.
+  - A háttérfolyamat csendben ellenőrzi mindhárom adatbázist, és amint felbukkan a felirat, automatikusan letölti, beilleszti a Plex mappába, frissíti a Plexet és Windows Toast értesítést küld.
 
 ### D. Torrent Kliens Integráció és HnR Szabályok (torrent_service.py)
 - **Ajánlott kliens**: **qBittorrent** (a beépített WebUI API stabil, robusztus és modern a `qbittorrent-api` könyvtárral).
@@ -169,6 +177,16 @@ Ncore_Film&Sori_letöltő/
   - A Plexbe rendezés előtt ellenőrzi a fájlokat: kiszűri a befejezetlen kiterjesztéseket (`.!qB`, `.part`, `.tmp`), és bináris olvasási teszttel győződik meg az írási zár feloldásáról.
 - **Automata Lemezterület Takarítás**:
   - A háttérszál ~2 óránként csendben ellenőrzi a munkamappát, és a 7 napnál régebbi ideiglenes `.torrent` fájlokat automatikusan törli.
+
+### K. Elgépelés-biztos Intelligens Kereső (TMDB Service Fuzzy Matcher)
+- **Magyar számszavak felismerése**: Feloldja a magyar sorszámokat és tőszámokat (pl. `gladiator ketto` -> `Gladiátor 2` és `Gladiátor II`, `dune masodik resz` -> `Dűne 2`), így a kereső azonnal a pontos folytatásokat dobja fel.
+- **Dinamikus „Gondoltál erre?” elgépelés-javítás**: A népszerű és klasszikus franchise-okból épített gyorsítótár segítségével a rendszer észreveszi az elütéseket (pl. `oppenhejmmer` -> `Oppenheimer`, `insterstellar` -> `Interstellar`), és null találat helyett intelligens javaslattal és automatikus találati listával várja a felhasználót.
+- **Rugalmas szómorzsolás (Word-dropping fallback)**: Ha egy hosszú összetett keresőkifejezésre nincs közvetlen találat, a motor lépésről lépésre tisztítja a kifejezést a leghangsúlyosabb kulcsszavak felé.
+
+### L. Szinkron-Radar & Minőség-Upgrade (audio_radar.py)
+- **Célja**: Ha egy várva várt új film vagy sorozat először csak eredeti nyelven (angolul, magyar felirattal) vagy SD felbontásban érhető el az nCore-on, a rendszer a sikeres letöltés és Plexbe rendezés után automatikusan felveszi a médiát a **Szinkron-Radar** figyelőlistájára.
+- **Autonóm ellenőrzés**: A `BackgroundWorker` a háttérben időről időre ellenőrzi az IMDb kód alapján, hogy megjelent-e az nCore-on a hivatalos magyar szinkronos kiadás (`hd_hun` vagy `sorozat_hun`).
+- **Automata upgrade & értesítés**: Amint felbukkan a magyar szinkronos digitális kiadás (CAM szűréssel), a rendszer letölti, befrissíti a Plex könyvtárat, a régi ideiglenes fájlt kivezeti, és natív Windows Toast értesítést küld: *„Megérkezett a magyar szinkron!”*.
 
 ---
 

@@ -15,10 +15,6 @@ qbittorrent-api>=2024.1.58
 # Media Server Integration
 plexapi>=4.15.11
 
-# Subtitle Search & Handling
-subliminal>=2.2.1
-babelfish>=0.6.0
-
 # Logging & Utilities
 loguru>=0.7.2
 

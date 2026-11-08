@@ -1,6 +1,6 @@
 import re
 from enum import Enum
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 
@@ -75,6 +75,8 @@ class MediaItem(BaseModel):
     media_type: MediaType = Field(default=MediaType.MOVIE, description="Film vagy sorozat")
     title_hu: str = Field(..., description="Magyar cím")
     title_en: Optional[str] = Field(default=None, description="Eredeti / nemzetközi cím")
+    original_title: Optional[str] = Field(default=None, description="Eredeti cím a gyártási nyelven")
+    original_language: Optional[str] = Field(default=None, description="Eredeti nyelv ISO kódja (pl. ko, ja, en, hu)")
     year: Optional[int] = Field(default=None, description="Kiadási év")
     overview: Optional[str] = Field(default=None, description="Magyar nyelvű rövid szinopszis")
     poster_url: Optional[str] = Field(default=None, description="Poszter kép URL")
@@ -84,6 +86,7 @@ class MediaItem(BaseModel):
     director: Optional[str] = Field(default=None, description="Rendező(k)")
     cast: List[str] = Field(default_factory=list, description="Főbb színészek listája")
     number_of_seasons: Optional[int] = Field(default=None, description="Sorozat esetén az évadok száma")
+    seasons: List[Dict[str, Any]] = Field(default_factory=list, description="Évadok adatai (epizódszámok)")
     trailer_url: Optional[str] = Field(default=None, description="YouTube előzetes URL vagy kulcs")
     runtime_minutes: Optional[int] = Field(default=None, description="Film hossza percben")
     collection_id: Optional[int] = Field(default=None, description="TMDB Gyűjtemény (franchise) ID")
@@ -223,3 +226,5 @@ class SubtitleItem(BaseModel):
     release_name: Optional[str] = Field(default=None, description="A felirathoz illeszkedő release neve")
     download_url: Optional[str] = Field(default=None, description="Felirat letöltési linkje")
     file_name: Optional[str] = Field(default=None, description="Célfájl neve a Plex mappában (pl. Film (2024).hu.srt)")
+    source: Optional[str] = Field(default="Feliratok.eu", description="Forrás: Feliratok.eu / Subirat.net / OpenSubtitles / Beágyazott")
+    match_score: Optional[int] = Field(default=None, description="Illeszkedési pontszám / hitelesség")

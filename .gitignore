@@ -80,6 +80,11 @@ downloads_scratch/
 cache/
 data/
 
+# AI / Gemini Export mappák (helyi kódösszesítők)
+gemini_context/
+gemini_argon/
+GEMINI_ARGON_EXPORT/
+
 # OS generated files
 .DS_Store
 .DS_Store?

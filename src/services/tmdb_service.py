@@ -1,3 +1,4 @@
+import datetime
 import re
 import time
 from typing import Any, Dict, List, Optional
@@ -6,6 +7,15 @@ from loguru import logger
 
 from src.config.settings import get_settings
 from src.models.media import MediaItem, MediaType
+
+TMDB_GENRE_MAP_HU: Dict[int, str] = {
+    28: "Akció", 12: "Kaland", 16: "Animáció", 35: "Vígjáték", 80: "Krimi",
+    99: "Dokumentum", 18: "Dráma", 10751: "Családi", 14: "Fantasy", 36: "Történelmi",
+    27: "Horror", 10402: "Zenei", 9648: "Rejtély", 10749: "Romantikus", 878: "Sci-Fi",
+    10770: "TV film", 53: "Thriller", 10752: "Háborús", 37: "Western",
+    10759: "Akció & Kaland", 10762: "Gyerek", 10763: "Hírek", 10764: "Reality",
+    10765: "Sci-Fi & Fantasy", 10766: "Szappanopera", 10767: "Talk show", 10768: "Háborús & Politika",
+}
 
 
 class TMDBService:
@@ -43,6 +53,106 @@ class TMDBService:
         self._discover_cache: dict[str, tuple[List[MediaItem], float]] = {}
         self._discover_ttl = 300.0  # 5 percig érvényes lista gyorsítótár a villámgyors lapozáshoz
 
+        # Elgépelés-javító és intelligens keresési javaslattevő (Fuzzy Search & Did-You-Mean)
+        self.last_search_suggestion: Optional[str] = None
+        self._popular_titles_pool: set[str] = {
+            "Oppenheimer", "Gladiátor", "Gladiátor II", "Gladiator", "Dűne", "Dűne: Második rész",
+            "Dune", "Dune: Part Two", "Deadpool & Wolverine", "Deadpool", "Wolverine",
+            "Avatar", "Avatar: A víz útja", "Csillagok között", "Interstellar", "Eredet", "Inception",
+            "A sötét lovag", "The Dark Knight", "Batman", "Joker", "Pókember", "Spider-Man",
+            "Bosszúállók", "Avengers", "A Gyűrűk Ura", "The Lord of the Rings", "A hobbit", "The Hobbit",
+            "Harry Potter", "Csillagok háborúja", "Star Wars", "Mátrix", "The Matrix",
+            "A keresztapa", "The Godfather", "Ponyvaregény", "Pulp Fiction", "Harcosok klubja", "Fight Club",
+            "Forrest Gump", "A remény rabjai", "The Shawshank Redemption", "Shutter Island", "Viharsziget",
+            "Trónok harca", "Game of Thrones", "Sárkányok háza", "House of the Dragon",
+            "Breaking Bad", "Totál szívás", "Stranger Things", "Csernobil", "Chernobyl",
+            "A sárkány csókja", "Vámpírnaplók", "The Vampire Diaries", "A korona", "The Crown",
+            "Shogun", "A sógun", "A mackó", "The Bear", "A Fehér Lótusz", "The White Lotus",
+            "Fekete tükör", "Black Mirror", "A Mandalóri", "The Mandalorian", "Loki", "Fallout",
+            "A fiúk", "The Boys", "Peaky Blinders", "Birmingham bandája", "Squid Game", "Nyerd meg az életed",
+        }
+
+    def _find_fuzzy_suggestion(self, query: str) -> Optional[str]:
+        """Keresési elgépelések (pl. 'oppenhejmmer') intelligens javítása népszerű címek alapján."""
+        import difflib
+        q_clean = query.strip().lower()
+        if len(q_clean) < 3:
+            return None
+
+        lookup = {t.lower(): t for t in self._popular_titles_pool}
+
+        # 1. Teljes cím egyezés keresése
+        matches = difflib.get_close_matches(q_clean, lookup.keys(), n=1, cutoff=0.55)
+        if matches:
+            return lookup[matches[0]]
+
+        # 2. Rész-szó / szótöredék egyezés (pl. 'harri potter' -> 'Harry Potter')
+        q_words = [w for w in q_clean.split() if len(w) >= 3]
+        for w in q_words:
+            sub_matches = difflib.get_close_matches(w, lookup.keys(), n=1, cutoff=0.6)
+            if sub_matches:
+                return lookup[sub_matches[0]]
+
+        return None
+
+    def _execute_search_queries(
+        self, queries_to_run: List[str], candidates: dict[int, tuple[dict, MediaType]]
+    ) -> None:
+        """Lefuttatja a keresési lekérdezéseket a multi, tv és movie végpontokon."""
+        endpoints = [
+            (f"{self.BASE_URL}/search/multi", "multi"),
+            (f"{self.BASE_URL}/search/tv", "tv"),
+            (f"{self.BASE_URL}/search/movie", "movie"),
+        ]
+        for q in queries_to_run:
+            for endpoint, mode in endpoints:
+                params = {
+                    "api_key": self.api_key,
+                    "query": q,
+                    "language": self.language,
+                    "include_adult": "false",
+                    "page": 1,
+                }
+                try:
+                    response = self.client.get(endpoint, params=params)
+                    if response.status_code != 200:
+                        continue
+                    data = response.json()
+                    raw_items = data.get("results", [])
+
+                    for item in raw_items:
+                        media_type_str = mode if mode in ("movie", "tv") else item.get("media_type")
+                        if media_type_str not in ("movie", "tv"):
+                            continue
+
+                        tmdb_id = item.get("id")
+                        if not tmdb_id or tmdb_id in candidates:
+                            continue
+
+                        media_type = MediaType.MOVIE if media_type_str == "movie" else MediaType.TV
+                        candidates[tmdb_id] = (item, media_type)
+
+                except Exception as e:
+                    logger.debug(f"Keresési hiba ({endpoint}): {e}")
+
+    def _prune_caches(self):
+        """Kordában tartja a memóriabeli gyorsítótárak méretét 24/7 futás esetén."""
+        now = time.time()
+        if len(self._discover_cache) > 120:
+            self._discover_cache = {
+                k: v for k, v in self._discover_cache.items()
+                if (now - v[1]) < self._discover_ttl
+            }
+            if len(self._discover_cache) > 80:
+                sorted_d = sorted(self._discover_cache.items(), key=lambda x: x[1][1], reverse=True)
+                self._discover_cache = dict(sorted_d[:50])
+
+        if len(self._search_cache) > 150:
+            self._search_cache.clear()
+
+        if len(self._details_cache) > 250:
+            self._details_cache.clear()
+
     def _is_configured(self) -> bool:
         return bool(self.api_key)
 
@@ -50,13 +160,15 @@ class TMDBService:
         """
         Film és sorozat keresése cím alapján.
         Kezeli az összetett szavakat (pl. "vámpír naplók" -> "vámpírnaplók"),
-        ékezet nélküli és alternatív formátumokat, valamint sorozatokat és filmeket egyaránt.
+        a magyar számnévi átváltást (pl. "gladiátor kettő" -> "Gladiátor 2"),
+        az ékezet nélküli formátumokat, és elgépelés esetén intelligens fuzzy javaslatot ad.
         """
         if not query or not query.strip():
             return []
 
         import unicodedata
 
+        self.last_search_suggestion = None
         raw_query = query.strip()
         cache_key = raw_query.lower()
         if cache_key in self._search_cache:
@@ -87,45 +199,50 @@ class TMDBService:
             if deaccent_no_space not in queries:
                 queries.append(deaccent_no_space)
 
+        # 5. Magyar számnévi bővítés (pl. "gladiator ketto" -> "gladiator 2", "gladiator II")
+        hu_numbers = {
+            r"\belső\b": "1", r"\belso\b": "1", r"\begy\b": "1",
+            r"\bmásodik\b": "2", r"\bmasodik\b": "2", r"\bkettő\b": "2", r"\bketto\b": "2",
+            r"\bharmadik\b": "3", r"\bharom\b": "3", r"\bhárom\b": "3",
+            r"\bnegyedik\b": "4", r"\bnegy\b": "4", r"\bnégy\b": "4",
+            r"\bötödik\b": "5", r"\botodik\b": "5", r"\böt\b": "5", r"\bot\b": "5",
+        }
+        roman_map = {"1": "I", "2": "II", "3": "III", "4": "IV", "5": "V"}
+        for pat, num in hu_numbers.items():
+            if re.search(pat, raw_query.lower()):
+                num_q = re.sub(pat, num, raw_query.lower())
+                if num_q not in queries:
+                    queries.append(num_q)
+                roman = roman_map.get(num)
+                if roman:
+                    rom_q = re.sub(pat, roman, raw_query.lower())
+                    if rom_q not in queries:
+                        queries.append(rom_q)
+
         candidates: dict[int, tuple[dict, MediaType]] = {}
 
         try:
-            for q in queries:
-                endpoints = [
-                    (f"{self.BASE_URL}/search/multi", "multi"),
-                    (f"{self.BASE_URL}/search/tv", "tv"),
-                    (f"{self.BASE_URL}/search/movie", "movie"),
+            # 1. Alapvető és kibővített lekérdezések futtatása
+            self._execute_search_queries(queries, candidates)
+
+            # 2. Intelligens fallback: Ha nincs találat és több szóból áll a keresés
+            if not candidates and len(raw_query.split()) >= 2:
+                words = [
+                    w for w in re.split(r"[\s._\-]+", raw_query)
+                    if len(w) >= 3 and w.lower() not in {"a", "az", "the", "and", "es", "és", "film", "sorozat"}
                 ]
+                if len(words) >= 1:
+                    fallback_q = " ".join(words[:2])
+                    if fallback_q not in queries:
+                        self._execute_search_queries([fallback_q], candidates)
 
-                for endpoint, mode in endpoints:
-                    params = {
-                        "api_key": self.api_key,
-                        "query": q,
-                        "language": self.language,
-                        "include_adult": "false",
-                        "page": 1,
-                    }
-                    try:
-                        response = self.client.get(endpoint, params=params)
-                        if response.status_code != 200:
-                            continue
-                        data = response.json()
-                        raw_items = data.get("results", [])
-
-                        for item in raw_items:
-                            media_type_str = mode if mode in ("movie", "tv") else item.get("media_type")
-                            if media_type_str not in ("movie", "tv"):
-                                continue
-
-                            tmdb_id = item.get("id")
-                            if not tmdb_id or tmdb_id in candidates:
-                                continue
-
-                            media_type = MediaType.MOVIE if media_type_str == "movie" else MediaType.TV
-                            candidates[tmdb_id] = (item, media_type)
-
-                    except Exception as e:
-                        logger.debug(f"Keresési hiba ({endpoint}): {e}")
+            # 3. Intelligens elgépelés-javítás (Fuzzy Did-You-Mean)
+            if not candidates:
+                suggestion = self._find_fuzzy_suggestion(raw_query)
+                if suggestion and suggestion.lower() != raw_query.lower():
+                    self.last_search_suggestion = suggestion
+                    logger.info(f"Fuzzy keresési javaslat aktiválva: '{raw_query}' -> '{suggestion}'")
+                    self._execute_search_queries([suggestion], candidates)
 
             # Relevancia és népszerűség alapú pontozás
             def calculate_score(cand: tuple[dict, MediaType]) -> float:
@@ -156,11 +273,18 @@ class TMDBService:
                 detailed_item = self.get_details(tmdb_id, media_type)
                 if detailed_item:
                     results.append(detailed_item)
+                    if detailed_item.title_hu:
+                        self._popular_titles_pool.add(detailed_item.title_hu)
+                    if detailed_item.title_en:
+                        self._popular_titles_pool.add(detailed_item.title_en)
                 else:
                     fallback_item = self._parse_basic_item(item, media_type)
                     if fallback_item:
                         results.append(fallback_item)
+                        if fallback_item.title_hu:
+                            self._popular_titles_pool.add(fallback_item.title_hu)
 
+            self._prune_caches()
             self._search_cache[cache_key] = results
             return results
 
@@ -185,7 +309,7 @@ class TMDBService:
         params = {
             "api_key": self.api_key,
             "language": self.language,
-            "append_to_response": "videos,external_ids,credits",
+            "append_to_response": "videos,external_ids,credits,translations",
         }
 
         try:
@@ -194,6 +318,7 @@ class TMDBService:
             data = response.json()
 
             item = self._parse_detailed_item(data, media_type)
+            self._prune_caches()
             self._details_cache[cache_key] = item
             return item
 
@@ -234,16 +359,32 @@ class TMDBService:
         tmdb_id = data.get("id")
         external_ids = data.get("external_ids", {})
         imdb_id = external_ids.get("imdb_id") or data.get("imdb_id")
+        orig_lang = data.get("original_language")
+        orig_title = data.get("original_title") if media_type == MediaType.MOVIE else data.get("original_name")
+
+        # Angol / nemzetközi cím feloldása a fordításokból
+        en_title = None
+        translations = data.get("translations", {}).get("translations", [])
+        for trans in translations:
+            if trans.get("iso_639_1") == "en":
+                t_data = trans.get("data", {})
+                cand_en = t_data.get("title") if media_type == MediaType.MOVIE else t_data.get("name")
+                if cand_en and cand_en.strip():
+                    en_title = cand_en.strip()
+                    break
+
+        if not en_title or orig_lang == "en":
+            en_title = orig_title
 
         if media_type == MediaType.MOVIE:
-            title_hu = data.get("title") or data.get("original_title") or "Ismeretlen film"
-            title_en = data.get("original_title")
+            title_hu = data.get("title") or en_title or orig_title or "Ismeretlen film"
+            title_en = en_title
             release_date = data.get("release_date") or ""
             seasons_count = None
             runtime_minutes = data.get("runtime")
         else:
-            title_hu = data.get("name") or data.get("original_name") or "Ismeretlen sorozat"
-            title_en = data.get("original_name")
+            title_hu = data.get("name") or en_title or orig_title or "Ismeretlen sorozat"
+            title_en = en_title
             release_date = data.get("first_air_date") or ""
             seasons_count = data.get("number_of_seasons")
             runtimes = data.get("episode_run_time") or []
@@ -309,6 +450,8 @@ class TMDBService:
             media_type=media_type,
             title_hu=title_hu,
             title_en=title_en,
+            original_title=orig_title,
+            original_language=orig_lang,
             year=year,
             overview=data.get("overview") or "Nincs elérhető magyar leírás.",
             poster_url=poster_url,
@@ -324,18 +467,24 @@ class TMDBService:
             collection_name=collection_name,
         )
 
-    def _parse_basic_item(self, data: dict, media_type: MediaType) -> Optional[MediaItem]:
+    def _parse_basic_item(
+        self, data: dict, media_type: MediaType, en_title: Optional[str] = None
+    ) -> Optional[MediaItem]:
         tmdb_id = data.get("id")
         if not tmdb_id:
             return None
 
+        orig_lang = data.get("original_language")
+        orig_title = data.get("original_title") if media_type == MediaType.MOVIE else data.get("original_name")
+        resolved_en = en_title or (orig_title if orig_lang == "en" else None) or orig_title
+
         if media_type == MediaType.MOVIE:
-            title_hu = data.get("title") or data.get("original_title") or "Ismeretlen"
-            title_en = data.get("original_title")
+            title_hu = data.get("title") or resolved_en or orig_title or "Ismeretlen"
+            title_en = resolved_en
             release_date = data.get("release_date") or ""
         else:
-            title_hu = data.get("name") or data.get("original_name") or "Ismeretlen"
-            title_en = data.get("original_name")
+            title_hu = data.get("name") or resolved_en or orig_title or "Ismeretlen"
+            title_en = resolved_en
             release_date = data.get("first_air_date") or ""
 
         year = int(release_date.split("-")[0]) if release_date and release_date.split("-")[0].isdigit() else None
@@ -344,13 +493,20 @@ class TMDBService:
         backdrop_path = data.get("backdrop_path")
         backdrop_url = f"{self.BACKDROP_BASE_URL}{backdrop_path}" if backdrop_path else None
 
+        # Műfajok kinyerése a genre_ids mezőből
+        raw_genre_ids = data.get("genre_ids", [])
+        genres = [TMDB_GENRE_MAP_HU[gid] for gid in raw_genre_ids if gid in TMDB_GENRE_MAP_HU]
+
         return MediaItem(
             tmdb_id=tmdb_id,
             imdb_id=None,
             media_type=media_type,
             title_hu=title_hu,
             title_en=title_en,
+            original_title=orig_title,
+            original_language=orig_lang,
             year=year,
+            genres=genres,
             overview=data.get("overview") or "",
             poster_url=poster_url,
             backdrop_url=backdrop_url,
@@ -385,6 +541,21 @@ class TMDBService:
                 return []
             data = resp.json()
             raw_items = data.get("results", [])
+
+            # Angol / nemzetközi címek feloldása, ha nem-angol vagy ázsiai tételek vannak az oldalon
+            en_titles = {}
+            if any(raw.get("original_language") not in ("en", None) for raw in raw_items):
+                try:
+                    en_req_params = {**req_params, "language": "en-US"}
+                    en_resp = self.client.get(f"{self.BASE_URL}{endpoint}", params=en_req_params)
+                    if en_resp.status_code == 200:
+                        en_data = en_resp.json()
+                        for en_raw in en_data.get("results", []):
+                            if "id" in en_raw:
+                                en_titles[en_raw["id"]] = en_raw.get("title") or en_raw.get("name")
+                except Exception as e:
+                    logger.debug(f"Hiba az angol címek lekérésekor: {e}")
+
             items = []
             for raw in raw_items:
                 if len(items) >= limit:
@@ -392,7 +563,7 @@ class TMDBService:
                 item_type = media_type
                 if raw.get("media_type"):
                     item_type = MediaType.MOVIE if raw["media_type"] == "movie" else MediaType.TV
-                parsed = self._parse_basic_item(raw, item_type)
+                parsed = self._parse_basic_item(raw, item_type, en_title=en_titles.get(raw.get("id")))
                 if parsed:
                     items.append(parsed)
             return items
@@ -411,16 +582,22 @@ class TMDBService:
         limit: int = 12,
         query: Optional[str] = None,
         with_watch_providers: Optional[str] = None,
+        with_origin_country: Optional[str] = None,
+        with_original_language: Optional[str] = None,
     ) -> List[MediaItem]:
         """
         Univerzális média felfedező és szűrő motor a TMDB-n.
-        Támogatja: műfaj, rendezési elv, évjárat/korszak szűrés, szöveges kulcsszó, streaming szolgáltató és dinamikus lapozás.
+        Támogatja: műfaj, rendezési elv, évjárat/korszak szűrés, szöveges kulcsszó, streaming szolgáltató,
+        nemzetiség/származási ország, eredeti nyelv és dinamikus lapozás.
         """
         if not self._is_configured():
             return []
 
         # Gyorsítótár kulcs előállítása
-        cache_key = f"{media_type.value}|{genre_ids}|{sort_by}|{year_min}|{year_max}|{page}|{limit}|{query}|{with_watch_providers}"
+        cache_key = (
+            f"{media_type.value}|{genre_ids}|{sort_by}|{year_min}|{year_max}|{page}|{limit}|{query}|"
+            f"{with_watch_providers}|{with_origin_country}|{with_original_language}"
+        )
         now = time.time()
         if cache_key in self._discover_cache:
             cached_items, ts = self._discover_cache[cache_key]
@@ -440,7 +617,22 @@ class TMDBService:
             elif year_min and media_type == MediaType.TV:
                 params["first_air_date_year"] = year_min
 
-            res = self._fetch_media_list(path, params, media_type, page=page, limit=limit)
+            # A TMDB /search végpont nem támogatja a with_original_language és with_genres szűrést,
+            # ezért nagyobb limitet (30) kérünk le, és kliensoldalon szűrjük a találatokat
+            raw_res = self._fetch_media_list(path, params, media_type, page=page, limit=30)
+
+            # Kliensoldali nyelvi szűrés ha meg van adva
+            if with_original_language:
+                allowed_langs = {l.strip().lower() for l in str(with_original_language).split("|") if l.strip()}
+                raw_res = [it for it in raw_res if (it.original_language or "").lower() in allowed_langs]
+
+            # Kliensoldali műfaji szűrés ha meg van adva
+            if genre_ids:
+                expected_genres = {TMDB_GENRE_MAP_HU[gid].lower() for gid in genre_ids if gid in TMDB_GENRE_MAP_HU}
+                raw_res = [it for it in raw_res if any(g.lower() in expected_genres for g in it.genres)]
+
+            res = raw_res[:limit]
+            self._prune_caches()
             self._discover_cache[cache_key] = (res, now)
             return res
 
@@ -452,9 +644,40 @@ class TMDBService:
             "include_adult": "false",
         }
 
+        # Nemzetiség / Származási ország és eredeti nyelv szűrés
+        if with_origin_country:
+            params["with_origin_country"] = str(with_origin_country)
+        if with_original_language:
+            lang_str = str(with_original_language).strip()
+            # A TMDB with_original_language csak egyetlen 2 betűs ISO-639-1 kódot támogat!
+            if "|" not in lang_str and len(lang_str) == 2:
+                params["with_original_language"] = lang_str
+            elif not with_origin_country:
+                # Ha nincs országkód, az első érvényes 2 betűs nyelvkódot használjuk
+                first_lang = lang_str.split("|")[0].strip()
+                if len(first_lang) == 2:
+                    params["with_original_language"] = first_lang
+
         # Minőségi szűrés: a legmagasabb értékelésnél csak a releváns szavazatszámúakat nézzük
         if sort_by.startswith("vote_average"):
-            params["vote_count.gte"] = 50
+            params["vote_count.gte"] = 50 if media_type == MediaType.MOVIE else 20
+
+        # Idő szerinti rendezés (legújabb kiadások elöl):
+        # Ha nincs beállítva felső évkorlát, korlátozzuk a mai napra, hogy a valóban megjelent/aktuális filmek jöjjenek (ne 2030-as bejelentések)
+        if "release_date.desc" in sort_by or "air_date.desc" in sort_by:
+            today_str = datetime.date.today().isoformat()
+            if not year_max:
+                if media_type == MediaType.MOVIE:
+                    params["primary_release_date.lte"] = today_str
+                else:
+                    params["first_air_date.lte"] = today_str
+            if "vote_count.gte" not in params:
+                params["vote_count.gte"] = 5  # szűrjük ki a leírás/szavazat nélküli szellemadatlapokat
+
+        # Idő szerinti rendezés (klasszikusok / legrégebbiek elöl):
+        if "release_date.asc" in sort_by or "air_date.asc" in sort_by:
+            if "vote_count.gte" not in params:
+                params["vote_count.gte"] = 40  # valódi, ismert klasszikusok megjelenítése
 
         if genre_ids:
             params["with_genres"] = ",".join(str(g) for g in genre_ids)
@@ -476,6 +699,7 @@ class TMDBService:
                 params["first_air_date.lte"] = f"{year_max}-12-31"
 
         res = self._fetch_media_list(path, params, media_type, page=page, limit=limit)
+        self._prune_caches()
         self._discover_cache[cache_key] = (res, now)
         return res
 

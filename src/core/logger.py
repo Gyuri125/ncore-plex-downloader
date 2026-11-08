@@ -48,7 +48,8 @@ def setup_logging(project_root: Path = None):
             enqueue=True,
         )
     except Exception as e:
-        sys.stderr.write(f"Nem sikerült a log fájl hozzáadása: {e}\n")
+        if sys.stderr:
+            sys.stderr.write(f"Nem sikerült a log fájl hozzáadása: {e}\n")
 
     # Memória sink a webes UI-hoz
     try:
